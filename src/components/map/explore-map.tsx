@@ -327,13 +327,18 @@ export function ExploreMap({
                 key={shape.key}
                 transform={`translate(${shape.anchor[0]} ${shape.anchor[1]}) scale(${labelScale})`}
               >
+                {/* Fixed dark ink on a light halo rather than themed
+                    colours: these labels always sit on the choropleth, whose
+                    yellow-to-red ramp stays light in both themes. Following
+                    the theme would put white text on pale yellow. */}
                 <text
                   textAnchor="middle"
-                  className="fill-foreground text-[13px] font-semibold"
+                  className="text-[13px] font-semibold"
                   style={{
+                    fill: "#1c1917",
                     paintOrder: "stroke",
-                    stroke: "var(--background)",
-                    strokeWidth: 3,
+                    stroke: "rgba(255,255,255,0.9)",
+                    strokeWidth: 3.5,
                     strokeLinejoin: "round",
                   }}
                 >
@@ -343,11 +348,12 @@ export function ExploreMap({
                   <text
                     y={15}
                     textAnchor="middle"
-                    className="fill-muted-foreground text-[11px] tabular-nums"
+                    className="text-[11px] tabular-nums"
                     style={{
+                      fill: "#44403c",
                       paintOrder: "stroke",
-                      stroke: "var(--background)",
-                      strokeWidth: 3,
+                      stroke: "rgba(255,255,255,0.9)",
+                      strokeWidth: 3.5,
                       strokeLinejoin: "round",
                     }}
                   >

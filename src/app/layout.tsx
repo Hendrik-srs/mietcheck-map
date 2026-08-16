@@ -28,6 +28,16 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Applies the theme before first paint.
+ *
+ * globals.css defines the palette behind a `.dark` class, so the class has
+ * to be on <html> by the time the first frame renders — doing it in an
+ * effect would show a white flash to dark-mode users on every navigation.
+ * Kept tiny and dependency-free; it runs synchronously in <head>.
+ */
+const themeScript = `(function(){try{var s=localStorage.getItem("theme");var d=s?s==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches;document.documentElement.classList.toggle("dark",d);}catch(e){}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -37,7 +47,11 @@ export default function RootLayout({
     <html
       lang="de"
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="min-h-screen bg-background text-foreground font-sans">
         {children}
       </body>

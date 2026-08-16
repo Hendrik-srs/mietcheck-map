@@ -40,11 +40,11 @@ anonymem Opt-in-Beitrag) · Keep-Alive (Cron + Heartbeat)
   variables → Actions). Workflow läuft sonst automatisch monatlich.
 
 **Bekannte Caveats / TODOs**
-- **Dark Mode ist toter Code**: `globals.css` definiert `.dark` via
-  `@custom-variant dark (&:is(.dark *))`, aber die Klasse wird nirgends
-  gesetzt und es gibt keinen Theme-Switcher. Alle `dark:`-Utilities in den
-  Komponenten sind damit wirkungslos. Entweder Switcher + `next-themes`
-  nachrüsten oder auf `prefers-color-scheme` umstellen.
+- **MapLibre-Tiles sind in der Preview-Umgebung nicht darstellbar**: `/karte`
+  bleibt dort leer (auch ohne Code-Änderung), der Style-JSON lädt aber
+  sauber. Heißt: Änderungen an `berlin-map-inner.tsx` lassen sich lokal nur
+  bedingt visuell prüfen — nach Deploy auf der Live-URL gegenchecken.
+  Betrifft aktuell den themenabhängigen Basemap-Wechsel (positron/dark).
 - **React 19 hoisted `<title>`**: In SVGs darf kein `<title>`-Kind stehen —
   React behandelt es als Document-Metadata und verschiebt es in den `<head>`,
   was die Hydration bricht (React-Error #418). Für SVG-Tooltips/a11y
@@ -119,14 +119,21 @@ src/
     ├── slugs.ts                  # Berlin-Bezirks-Slugs (build-time-known)
     ├── geocoding.ts              # Nominatim-Wrapper
     ├── rent-color.ts             # geteilte Choropleth-Skala (MapLibre + SVG)
+    ├── geo-projection.ts         # Mercator + SVG-Pfade für die Hand-SVG-Karten
+    ├── data/germany-states.json  # 16 Bundesländer, vereinfacht (Eurostat NUTS)
     ├── data/{districts,overview,fairness,crowdsourced,mietspiegel,sources}.ts
     └── supabase/{browser,server,static,admin}.ts
+
+components/
+├── theme-toggle.tsx              # Hell/Dunkel; Klasse setzt Inline-Script im Layout
+└── map/explore-map.tsx           # Landing-Karte: Deutschland → Berlin (Zoom-Overlay)
 
 scripts/ingest/                   # berlin-districts.ts, berlin-ortsteile.ts,
                                   # berlin-ibb.ts, berlin-wohnlagen.ts,
                                   # berlin-mietspiegel-2024.ts
                                   # data/berlin-mietspiegel-2024.json (eingecheckt)
-supabase/migrations/              # 0001..0013 (manuell im SQL Editor anwenden)
+supabase/migrations/              # 0001..0014 (manuell im SQL Editor anwenden)
+scripts/build-germany-geometry.ts # einmalig: Eurostat NUTS → germany-states.json
 .github/workflows/keep-alive.yml  # Daily Ping + Heartbeat-Commit alle 30 Tage
 .github/workflows/auto-ingest.yml # Monatliche Re-Ingestion + täglicher Drift-Check
 ```
@@ -156,6 +163,19 @@ die server-gerenderte SVG-Heatmap auf der Landing) · `submit_crowdsourced_rent`
 Voraussetzung dafür ist `lib/supabase/static.ts` — ein Client **ohne**
 `cookies()`, denn `cookies()` zwingt eine Route in dynamisches Rendering.
 Für Server Actions und alles Auth-abhängige weiterhin `lib/supabase/server.ts`.
+
+**Zwei Karten, klar getrennt:** Die Landing zeigt `ExploreMap` — ein
+handgebautes SVG (Deutschland + Berlin in *einem* projizierten
+Koordinatenraum), das per CSS-Transform von der Bundesland-Übersicht in die
+Bezirke zoomt. Kein MapLibre, damit die Startseite ohne Kartenbibliothek und
+ohne Tiles sofort steht. `/karte` bleibt das interaktive Werkzeug mit
+MapLibre und ist aus dem Overlay heraus verlinkt.
+
+**Theming:** Hell/Dunkel über eine `.dark`-Klasse auf `<html>`. Gesetzt wird
+sie von einem Inline-Script im Root-Layout **vor dem ersten Paint** (sonst
+Flash), `theme-toggle.tsx` spiegelt und kippt sie nur. Wer den Zustand
+braucht, liest ihn synchron aus dem DOM — ein Effect, der erst nach dem
+ersten Render korrigiert, lässt MapLibre mitten im Style-Laden umschalten.
 
 ## Konventionen & Regeln
 

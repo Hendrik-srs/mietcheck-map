@@ -19,22 +19,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { RENT_NO_DATA_COLOR, RENT_STOPS, rentGradientCss } from "@/lib/rent-color";
+import { useIsDarkTheme } from "@/lib/use-theme";
 import type {
   DistrictProperties,
   DistrictsFeatureCollection,
   RentHistoryPoint,
 } from "@/lib/data/districts";
-
-// Sequential YlOrRd-style choropleth: yellow (cheap) -> dark red (expensive).
-// Stops chosen for the 2025 Berlin range (11.56 - 20.00 €/m² Nettokaltmiete).
-const RENT_STOPS: Array<[number, string]> = [
-  [11, "#fff7bc"],
-  [13, "#fee391"],
-  [15, "#fec44f"],
-  [17, "#fb923c"],
-  [19, "#dc2626"],
-  [21, "#7f1d1d"],
-];
 
 const FILL_LAYER: LayerProps = {
   id: "districts-fill",
@@ -43,7 +34,7 @@ const FILL_LAYER: LayerProps = {
     "fill-color": [
       "case",
       ["==", ["get", "rent_median"], null],
-      "#cbd5e1",
+      RENT_NO_DATA_COLOR,
       [
         "interpolate",
         ["linear"],
@@ -138,6 +129,15 @@ function parseDistrictProperties(
   };
 }
 
+/**
+ * OpenFreeMap ships a light and a dark basemap. Picking one to match the
+ * site theme keeps a dark page from being lit up by a white map.
+ */
+const BASEMAP = {
+  light: "https://tiles.openfreemap.org/styles/positron",
+  dark: "https://tiles.openfreemap.org/styles/dark",
+} as const;
+
 export default function BerlinMapInner({
   districts,
 }: {
@@ -145,6 +145,7 @@ export default function BerlinMapInner({
 }) {
   const [selected, setSelected] = useState<DistrictProperties | null>(null);
   const [cursor, setCursor] = useState<"auto" | "pointer">("auto");
+  const isDark = useIsDarkTheme();
 
   const onClick = useCallback((e: MapLayerMouseEvent) => {
     const feature = e.features?.[0];
@@ -171,7 +172,7 @@ export default function BerlinMapInner({
         minZoom={8}
         maxZoom={16}
         style={{ width: "100%", height: "100%" }}
-        mapStyle="https://tiles.openfreemap.org/styles/positron"
+        mapStyle={isDark ? BASEMAP.dark : BASEMAP.light}
         interactiveLayerIds={[FILL_LAYER.id!]}
         onClick={onClick}
         onMouseEnter={() => setCursor("pointer")}
@@ -212,10 +213,6 @@ function Legend({
   max: number;
   count: number;
 }) {
-  const gradient = RENT_STOPS.map(
-    ([value, color]) =>
-      `${color} ${Math.round(((value - RENT_STOPS[0][0]) / (RENT_STOPS[RENT_STOPS.length - 1][0] - RENT_STOPS[0][0])) * 100)}%`,
-  ).join(", ");
   return (
     <div className="pointer-events-auto absolute right-4 bottom-16 z-10 w-60 rounded-lg border bg-background/90 p-3 text-xs shadow-md backdrop-blur">
       <div className="mb-1 font-medium text-foreground">
@@ -226,7 +223,7 @@ function Legend({
       </div>
       <div
         className="h-2 w-full rounded-sm"
-        style={{ background: `linear-gradient(to right, ${gradient})` }}
+        style={{ background: rentGradientCss() }}
         aria-hidden
       />
       <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Map } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface SiteHeaderProps {
   /**
@@ -51,6 +52,7 @@ export function SiteHeader({ width = "6xl", showBadge = false }: SiteHeaderProps
               in Entwicklung · v0.1
             </Badge>
           )}
+          <ThemeToggle />
         </div>
       </div>
     </header>
