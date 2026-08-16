@@ -48,3 +48,6 @@ next-env.d.ts
 # JSON file is checked in; the source PDF is pulled fresh on demand.
 scripts/ingest/data/*.pdf
 scripts/ingest/data/*.txt
+
+# Tooling-managed git worktrees (own node_modules + build cache)
+.claude/worktrees/

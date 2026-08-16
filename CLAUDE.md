@@ -40,6 +40,16 @@ anonymem Opt-in-Beitrag) · Keep-Alive (Cron + Heartbeat)
   variables → Actions). Workflow läuft sonst automatisch monatlich.
 
 **Bekannte Caveats / TODOs**
+- **Dark Mode ist toter Code**: `globals.css` definiert `.dark` via
+  `@custom-variant dark (&:is(.dark *))`, aber die Klasse wird nirgends
+  gesetzt und es gibt keinen Theme-Switcher. Alle `dark:`-Utilities in den
+  Komponenten sind damit wirkungslos. Entweder Switcher + `next-themes`
+  nachrüsten oder auf `prefers-color-scheme` umstellen.
+- **React 19 hoisted `<title>`**: In SVGs darf kein `<title>`-Kind stehen —
+  React behandelt es als Document-Metadata und verschiebt es in den `<head>`,
+  was die Hydration bricht (React-Error #418). Für SVG-Tooltips/a11y
+  stattdessen `aria-label` nutzen. Kostete in dieser Session eine
+  Debug-Runde, siehe `berlin-hero-map.tsx`.
 - **Crowdsourced-Mieten ungeprüft auf Plausibilität**: `/check` mit
   Opt-in-Häkchen akzeptiert aktuell jeden Wert (z.B. 1 € oder 100 Mio €) und
   speichert ihn als `pending`. Verzerrt zwar nicht die Karte (Approved-Flow),
@@ -97,6 +107,8 @@ src/
 │   │   ├── page.tsx              # SEO-Bezirks-Seite (JSON-LD Place)
 │   │   └── opengraph-image.tsx   # next/og PNG pro Bezirk
 │   ├── quellen/page.tsx          # Datenquellen-Transparenz
+│   │                             # Landing: page.tsx zieht Stats/Quellen live
+│   │                             # aus der DB (keine hartkodierten Claims)
 │   ├── sitemap.ts                # Sitemap (16 URLs)
 │   └── robots.ts
 ├── components/
@@ -106,14 +118,15 @@ src/
 └── lib/
     ├── slugs.ts                  # Berlin-Bezirks-Slugs (build-time-known)
     ├── geocoding.ts              # Nominatim-Wrapper
-    ├── data/{districts,fairness,crowdsourced,mietspiegel,sources}.ts
-    └── supabase/{browser,server,admin}.ts
+    ├── rent-color.ts             # geteilte Choropleth-Skala (MapLibre + SVG)
+    ├── data/{districts,overview,fairness,crowdsourced,mietspiegel,sources}.ts
+    └── supabase/{browser,server,static,admin}.ts
 
 scripts/ingest/                   # berlin-districts.ts, berlin-ortsteile.ts,
                                   # berlin-ibb.ts, berlin-wohnlagen.ts,
                                   # berlin-mietspiegel-2024.ts
                                   # data/berlin-mietspiegel-2024.json (eingecheckt)
-supabase/migrations/              # 0001..0012 (manuell im SQL Editor anwenden)
+supabase/migrations/              # 0001..0013 (manuell im SQL Editor anwenden)
 .github/workflows/keep-alive.yml  # Daily Ping + Heartbeat-Commit alle 30 Tage
 .github/workflows/auto-ingest.yml # Monatliche Re-Ingestion + täglicher Drift-Check
 ```
@@ -132,9 +145,17 @@ RLS aktiviert, public-read, Writes nur via admin-Client.
 + `rent_history`) · `find_district_by_point(city_id, lon, lat)` (`ST_Covers`
 bevorzugt Ortsteil-Treffer, liefert zusätzlich `parent_district_*`; Rent-Join
 läuft über den Parent-Bezirk) · `find_mietspiegel_2024_row(wohnlage, baujahr,
-sqm, west_ost)` (passende Tabellenzeile) · `submit_crowdsourced_rent`
+sqm, west_ost)` (passende Tabellenzeile) · `get_districts_overview(city_id,
+tolerance)` (ST_Simplify-Geometrien + Median, ~30 KB statt ~1,2 MB — speist
+die server-gerenderte SVG-Heatmap auf der Landing) · `submit_crowdsourced_rent`
 (Service-Role-only, insert als pending) · `upsert_berlin_wohnlagen_batch`/
 `upsert_berlin_mietspiegel_2024_batch` (Bulk-Ingest via JSONB).
+
+**Rendering-Strategie:** Alle öffentlichen Seiten (`/`, `/karte`, `/quellen`,
+`/bezirk/[slug]`) sind statisch prerendert mit ISR (`revalidate` 1 h – 1 d).
+Voraussetzung dafür ist `lib/supabase/static.ts` — ein Client **ohne**
+`cookies()`, denn `cookies()` zwingt eine Route in dynamisches Rendering.
+Für Server Actions und alles Auth-abhängige weiterhin `lib/supabase/server.ts`.
 
 ## Konventionen & Regeln
 

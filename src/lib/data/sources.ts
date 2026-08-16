@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createStaticClient } from "@/lib/supabase/static";
 
 export type DataSourceType =
   | "mietspiegel"
@@ -27,7 +27,7 @@ export interface DataSource {
  * transparency table. Sorted by source type so related entries cluster.
  */
 export async function getAllDataSources(): Promise<DataSource[]> {
-  const supabase = await createClient();
+  const supabase = createStaticClient();
   const { data, error } = await supabase
     .from("data_sources")
     .select(

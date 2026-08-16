@@ -1,6 +1,6 @@
 import type { FeatureCollection, MultiPolygon, Polygon } from "geojson";
 
-import { createClient } from "@/lib/supabase/server";
+import { createStaticClient } from "@/lib/supabase/static";
 
 export interface RentHistoryPoint {
   period_end: string;
@@ -32,7 +32,7 @@ export type DistrictsFeatureCollection = FeatureCollection<
 export async function getDistrictsGeoJSON(
   cityId: string,
 ): Promise<DistrictsFeatureCollection> {
-  const supabase = await createClient();
+  const supabase = createStaticClient();
   const { data, error } = await supabase.rpc("get_districts_geojson", {
     p_city_id: cityId,
   });

@@ -11,6 +11,10 @@ export const metadata = {
     "Interaktive Karte der Berliner Bezirke mit Datenquellen aus dem Geoportal Berlin.",
 };
 
+// The GeoJSON payload only changes when the monthly ingest runs, so serve
+// it prerendered rather than querying PostGIS on every visit.
+export const revalidate = 3600;
+
 export default async function KartePage() {
   const districts = await getDistrictsGeoJSON("berlin");
 
