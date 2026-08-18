@@ -19,6 +19,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AddressInput } from "./address-input";
 import { runFairnessCheck, type CheckFormState } from "./actions";
 import type { Verdict } from "@/lib/data/fairness";
 import type { MietspiegelVerdict } from "@/lib/data/mietspiegel";
@@ -104,21 +105,13 @@ export function CheckForm() {
         <form action={formAction} className="grid gap-5">
           <div className="grid gap-2">
             <Label htmlFor="address">Adresse in Berlin</Label>
-            <Input
-              id="address"
-              name="address"
-              required
-              autoComplete="street-address"
-              placeholder="Sonnenallee 100, 12045 Berlin"
-              defaultValue={v.address}
-              aria-invalid={Boolean(e.address) || undefined}
-            />
+            <AddressInput defaultValue={v.address} invalid={Boolean(e.address)} />
             {e.address ? (
               <p className="text-sm text-destructive">{e.address}</p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Straße + Hausnummer + PLZ. Wir verarbeiten die Adresse nur für den Vergleich,
-                speichern sie nicht.
+                Tippen und aus den Vorschlägen wählen. Wir verarbeiten die
+                Adresse nur für den Vergleich und speichern sie nicht.
               </p>
             )}
           </div>
@@ -182,7 +175,11 @@ export function CheckForm() {
             )}
           </div>
 
-          <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+          <div
+            className={`rounded-lg border bg-muted/30 p-3 ${
+              e.share ? "border-destructive/50" : "border-border/60"
+            }`}
+          >
             <label
               htmlFor="share"
               className="flex cursor-pointer items-start gap-3 text-sm"
@@ -206,6 +203,11 @@ export function CheckForm() {
                 </span>
               </span>
             </label>
+            {e.share && (
+              <p className="mt-2.5 border-t border-destructive/20 pt-2.5 text-sm text-destructive">
+                {e.share}
+              </p>
+            )}
           </div>
 
           {e._form && (

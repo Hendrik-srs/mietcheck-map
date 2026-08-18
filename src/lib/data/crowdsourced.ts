@@ -25,6 +25,26 @@ export function buildingYearToBracket(year: number): BuildingAgeBracket {
   return "nach_2010";
 }
 
+/**
+ * Range a submitted rent has to fall into, in EUR per square metre.
+ *
+ * Berlin's 2024 Mietspiegel starts at 4.79 EUR/sqm, so 3 is below any real
+ * tenancy; 60 is far above the priciest new-build. The point is not to
+ * filter unusual rents — those are exactly what makes crowdsourced data
+ * worth having — but to reject values that cannot be a rent at all, before
+ * they reach a human reviewer. Mirrored in the RPC (migration 0016) so the
+ * rule also holds if the action is bypassed.
+ */
+export const PLAUSIBLE_RENT_PER_SQM = { min: 3, max: 60 } as const;
+
+export function isPlausibleRentPerSqm(eurPerSqm: number): boolean {
+  return (
+    Number.isFinite(eurPerSqm) &&
+    eurPerSqm >= PLAUSIBLE_RENT_PER_SQM.min &&
+    eurPerSqm <= PLAUSIBLE_RENT_PER_SQM.max
+  );
+}
+
 interface SubmitArgs {
   districtId: string;
   sizeSqm: number;

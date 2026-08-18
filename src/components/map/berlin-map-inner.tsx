@@ -317,6 +317,14 @@ function parseDistrictProperties(
 }
 
 
+/** GeoJSON sources this component owns, as opposed to the basemap's. */
+const OUR_SOURCE_IDS = new Set([
+  "states",
+  "state-labels",
+  "districts",
+  "district-labels",
+]);
+
 /**
  * Turns off the basemap's own state names.
  *
@@ -331,7 +339,12 @@ function parseDistrictProperties(
 function hideBasemapStateLabels(map: maplibregl.Map): void {
   try {
     for (const layer of map.getStyle()?.layers ?? []) {
-      if (layer.type === "symbol" && /state/i.test(layer.id)) {
+      if (layer.type !== "symbol") continue;
+      // Our own layers are named states-label / districts-label, so a bare
+      // /state/ match would switch off the very labels we want to keep.
+      const source = "source" in layer ? layer.source : undefined;
+      if (typeof source === "string" && OUR_SOURCE_IDS.has(source)) continue;
+      if (/state/i.test(layer.id)) {
         map.setLayoutProperty(layer.id, "visibility", "none");
       }
     }

@@ -56,19 +56,6 @@ anonymem Opt-in-Beitrag) · Keep-Alive (Cron + Heartbeat)
   was die Hydration bricht (React-Error #418). Für SVG-Tooltips/a11y
   stattdessen `aria-label` nutzen. Kostete in dieser Session eine
   Debug-Runde, siehe `germany-preview.tsx`.
-- **Crowdsourced-Mieten ungeprüft auf Plausibilität**: `/check` mit
-  Opt-in-Häkchen akzeptiert aktuell jeden Wert (z.B. 1 € oder 100 Mio €) und
-  speichert ihn als `pending`. Verzerrt zwar nicht die Karte (Approved-Flow),
-  aber Moderation muss alles per Hand filtern. Fix: Server-Action und/oder
-  RPC sollten Mietpreis pro m² gegen ein realistisches Band prüfen
-  (z.B. 3 €/m² – 60 €/m²) und sonst mit Validation-Fehler ablehnen.
-- **Adress-Eingabe in `/check` hat kein Autocomplete**: User tippt frei in
-  ein Textfeld; Placeholder verschwindet beim Tippen, sodass Format
-  ("Straße Hausnr., PLZ Berlin") leicht vergessen wird und Tippfehler den
-  Nominatim-Lookup ins Leere laufen lassen. Fix: Live-Autocomplete via
-  Nominatim Search-API (mit Debounce) oder Photon (Komoot, basiert auf
-  Nominatim, hat Autocomplete out-of-the-box). Bonus: Lat/Lon kommt direkt
-  aus dem Vorschlag, kein zweiter Geocode-Roundtrip nötig.
 - **West/Ost-Sonderfall im Mietspiegel** (Bj. 1973–1990): konservativ pro Bezirk
   inferiert, weil das offizielle Straßenverzeichnis nur als PDF im Amtsblatt
   existiert. Ungenauigkeit ~5 % der Wohnungen mit diesem Baujahr. Fix wäre
@@ -133,7 +120,7 @@ scripts/ingest/                   # berlin-districts.ts, berlin-ortsteile.ts,
                                   # berlin-ibb.ts, berlin-wohnlagen.ts,
                                   # berlin-mietspiegel-2024.ts
                                   # data/berlin-mietspiegel-2024.json (eingecheckt)
-supabase/migrations/              # 0001..0015 (manuell im SQL Editor anwenden)
+supabase/migrations/              # 0001..0016 (manuell im SQL Editor anwenden)
 scripts/build-germany-geometry.ts # einmalig: Eurostat NUTS → germany-states.json
 .github/workflows/keep-alive.yml  # Daily Ping + Heartbeat-Commit alle 30 Tage
 .github/workflows/auto-ingest.yml # Monatliche Re-Ingestion + täglicher Drift-Check
@@ -183,6 +170,23 @@ Durchschnitt seiner Bezirks-Mediane in derselben Farbskala; Länder ohne
 Daten bleiben neutral grau und sagen das beim Klick auch.
 `interactiveLayerIds` schaltet mit: anklickbar ist immer nur, was man sehen
 und treffen kann.
+
+**Adress-Eingabe mit Vorschlägen.** `/check` nutzt Photon (Komoot,
+OSM-basiert, für Type-ahead gebaut — Nominatim bittet ausdrücklich darum,
+nicht dafür verwendet zu werden) über den eigenen Route Handler
+`/api/adress-vorschlaege`. Der Proxy sorgt dafür, dass IP und halbfertige
+Adresse nicht zu einem Dritten gehen. Zweistufig: Straßen-Treffer füllen den
+Namen und lassen die Hausnummer folgen, Adress-Treffer schließen ab und
+liefern `lat`/`lon` als Hidden Fields mit — der Server spart den
+Geocode-Roundtrip und Tippfehler sind ausgeschlossen. Die Koordinaten kommen
+vom Client, werden also gegen Berlins Bounding-Box geprüft, sonst
+Fallback auf Nominatim.
+
+**Plausibilitätsband für Beiträge.** `PLAUSIBLE_RENT_PER_SQM` (3–60 €/m²)
+in `lib/data/crowdsourced.ts` und dieselbe Prüfung in
+`submit_crowdsourced_rent` (Migration 0016). Nicht um ungewöhnliche Mieten
+zu filtern — die sind der Sinn von Crowdsourcing — sondern um Werte
+abzuweisen, die keine Miete sein können, bevor sie Moderationszeit kosten.
 
 **Beschriftung gehört uns.** `hideBasemapStateLabels()` schaltet die
 Bundesland-Labels der Basemap ab (`label_state` in positron, `place_state`

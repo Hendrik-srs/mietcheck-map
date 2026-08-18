@@ -6,6 +6,8 @@ import { findDistrictByPoint, assessFairness } from "@/lib/data/fairness";
 import {
   submitCrowdsourcedRent,
   buildingYearToBracket,
+  isPlausibleRentPerSqm,
+  PLAUSIBLE_RENT_PER_SQM,
 } from "@/lib/data/crowdsourced";
 import {
   findMietspiegelRow,
@@ -32,6 +34,21 @@ const schema = z.object({
   ),
 });
 
+
+/** Berlin's bounding box, used to sanity-check client-supplied coordinates. */
+const BERLIN_BOUNDS = { minLon: 13.0, minLat: 52.3, maxLon: 13.8, maxLat: 52.7 };
+
+function coordinatesFromForm(
+  formData: FormData,
+): { lat: number; lon: number } | null {
+  const lat = Number(formData.get("lat"));
+  const lon = Number(formData.get("lon"));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < BERLIN_BOUNDS.minLat || lat > BERLIN_BOUNDS.maxLat) return null;
+  if (lon < BERLIN_BOUNDS.minLon || lon > BERLIN_BOUNDS.maxLon) return null;
+  return { lat, lon };
+}
+
 type FormValues = {
   address: string;
   sizeSqm: string;
@@ -43,7 +60,10 @@ type FormValues = {
 export interface CheckFormState {
   status: "idle" | "error" | "success";
   errors?: Partial<
-    Record<"address" | "sizeSqm" | "monthlyRent" | "buildingYear" | "_form", string>
+    Record<
+      "address" | "sizeSqm" | "monthlyRent" | "buildingYear" | "share" | "_form",
+      string
+    >
   >;
   // Echo back what the user typed so the form keeps its values after a failed submit.
   values?: FormValues;
@@ -92,16 +112,28 @@ export async function runFairnessCheck(
   const { address, sizeSqm, monthlyRent } = parsed.data;
   const buildingYear: number | null = parsed.data.buildingYear ?? null;
 
-  let geocoded;
-  try {
-    geocoded = await geocodeAddressInBerlin(address);
-  } catch (e) {
-    console.error("[check] geocoding error", e);
-    return {
-      status: "error",
-      values: raw,
-      errors: { _form: "Geocoding-Dienst gerade nicht erreichbar. Bitte später erneut versuchen." },
-    };
+  // The autocomplete submits the coordinates of the entry the user picked,
+  // which saves a geocoding round-trip and rules out the typos that made
+  // free-text lookups fail. Client-supplied, so it is range-checked against
+  // Berlin before use — a bad value only ever misleads the sender, but
+  // falling back to the geocoder is both safer and more helpful.
+  const picked = coordinatesFromForm(formData);
+
+  let geocoded: { lat: number; lon: number; displayName: string } | null = picked
+    ? { ...picked, displayName: address }
+    : null;
+
+  if (!geocoded) {
+    try {
+      geocoded = await geocodeAddressInBerlin(address);
+    } catch (e) {
+      console.error("[check] geocoding error", e);
+      return {
+        status: "error",
+        values: raw,
+        errors: { _form: "Geocoding-Dienst gerade nicht erreichbar. Bitte später erneut versuchen." },
+      };
+    }
   }
 
   if (!geocoded) {
@@ -171,6 +203,22 @@ export async function runFairnessCheck(
 
   let shared = false;
   if (raw.share) {
+    // Checked before writing: the map only shows approved rows, but junk
+    // still costs a human the time to reject it.
+    const pricePerSqm = monthlyRent / sizeSqm;
+    if (!isPlausibleRentPerSqm(pricePerSqm)) {
+      return {
+        status: "error",
+        values: raw,
+        errors: {
+          share: `Das ergibt ${pricePerSqm.toLocaleString("de-DE", {
+            maximumFractionDigits: 2,
+          })} € pro m². Für einen Beitrag zur Karte erwarten wir ${
+            PLAUSIBLE_RENT_PER_SQM.min
+          }–${PLAUSIBLE_RENT_PER_SQM.max} € pro m². Bitte Wohnfläche und Kaltmiete prüfen — oder das Häkchen entfernen, dann rechnen wir dir das Ergebnis trotzdem aus.`,
+        },
+      };
+    }
     try {
       // crowdsourced_rents speichert auf Bezirks-Ebene — IBB-Vergleiche
       // existieren nur dort.
