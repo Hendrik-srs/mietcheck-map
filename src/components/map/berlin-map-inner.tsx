@@ -12,6 +12,7 @@ import {
   type MapRef,
 } from "react-map-gl/maplibre";
 import { useRef } from "react";
+import type maplibregl from "maplibre-gl";
 import type { FeatureCollection, Geometry, Point } from "geojson";
 import { ArrowRight, Check, ChevronDown, Maximize2 } from "lucide-react";
 
@@ -43,8 +44,22 @@ import type {
  * second, different map of its own.
  */
 
-/** Below this zoom the country view dominates; above it, the districts. */
-const DISTRICT_ZOOM = 8.2;
+/**
+ * The map has exactly two states, and the handover happens in one short
+ * zoom band so it reads as a single gesture: the coloured state splits into
+ * its districts.
+ *
+ * Below SPLIT_START a state is one filled shape — its own average, in the
+ * same colour scale the districts use. Above SPLIT_END the districts are
+ * the map. In between they cross-fade over 0.4 zoom levels, which is fast
+ * enough to feel deliberate rather than mushy.
+ */
+const SPLIT_START = 8.0;
+const SPLIT_END = 8.4;
+/** Midpoint — decides which layer answers a click. */
+const DISTRICT_ZOOM = (SPLIT_START + SPLIT_END) / 2;
+/** Names stay off in the far view; they only add clutter at country scale. */
+const STATE_LABEL_ZOOM = 6;
 
 interface StateProperties {
   id: string;
@@ -101,10 +116,10 @@ const STATES_FILL: LayerProps = {
       ["linear"],
       ["zoom"],
       4.5,
-      ["case", ["==", ["get", "rent_median"], null], 0.3, 0.85],
-      DISTRICT_ZOOM,
-      ["case", ["==", ["get", "rent_median"], null], 0.1, 0.2],
-      DISTRICT_ZOOM + 1,
+      ["case", ["==", ["get", "rent_median"], null], 0.25, 0.85],
+      SPLIT_START,
+      ["case", ["==", ["get", "rent_median"], null], 0.25, 0.85],
+      SPLIT_END,
       0,
     ],
   },
@@ -122,9 +137,9 @@ const STATES_LINE: LayerProps = {
       ["zoom"],
       4.5,
       0.8,
-      DISTRICT_ZOOM,
-      0.35,
-      DISTRICT_ZOOM + 1,
+      SPLIT_START,
+      0.8,
+      SPLIT_END,
       0,
     ],
   },
@@ -153,11 +168,13 @@ const STATES_LABEL: LayerProps = {
       "interpolate",
       ["linear"],
       ["zoom"],
-      5,
+      STATE_LABEL_ZOOM - 0.5,
+      0,
+      STATE_LABEL_ZOOM,
       1,
-      DISTRICT_ZOOM - 0.5,
+      SPLIT_START,
       1,
-      DISTRICT_ZOOM + 0.5,
+      SPLIT_END,
       0,
     ],
   },
@@ -178,14 +195,16 @@ const FILL_LAYER: LayerProps = {
         ...RENT_STOPS.flat(),
       ],
     ],
+    // Hidden entirely until the split, so the country view shows one shape
+    // per state rather than a speck of twelve.
     "fill-opacity": [
       "interpolate",
       ["linear"],
       ["zoom"],
-      DISTRICT_ZOOM - 1.5,
-      0.55,
-      DISTRICT_ZOOM,
-      0.75,
+      SPLIT_START,
+      0,
+      SPLIT_END,
+      0.8,
     ],
   },
 };
@@ -196,7 +215,15 @@ const LINE_LAYER: LayerProps = {
   paint: {
     "line-color": "#1e3a8a",
     "line-width": 1,
-    "line-opacity": 0.6,
+    "line-opacity": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      SPLIT_START,
+      0,
+      SPLIT_END,
+      0.6,
+    ],
   },
 };
 
@@ -223,9 +250,9 @@ const LABEL_LAYER: LayerProps = {
       "interpolate",
       ["linear"],
       ["zoom"],
-      DISTRICT_ZOOM - 0.5,
+      SPLIT_END,
       0,
-      DISTRICT_ZOOM + 0.3,
+      SPLIT_END + 0.3,
       1,
     ],
   },
@@ -289,6 +316,30 @@ function parseDistrictProperties(
   };
 }
 
+
+/**
+ * Turns off the basemap's own state names.
+ *
+ * OpenFreeMap labels the Bundesländer between roughly zoom 5 and 8 — the
+ * same range where our labels sit — so both were drawn on top of each
+ * other, grey underneath and white above. We keep our own, which follow the
+ * data and share the styling with the district names.
+ *
+ * The layer id differs per style (`label_state` in positron, `place_state`
+ * in dark), so match by pattern instead of hardcoding.
+ */
+function hideBasemapStateLabels(map: maplibregl.Map): void {
+  try {
+    for (const layer of map.getStyle()?.layers ?? []) {
+      if (layer.type === "symbol" && /state/i.test(layer.id)) {
+        map.setLayoutProperty(layer.id, "visibility", "none");
+      }
+    }
+  } catch {
+    // Style not ready yet; onStyleData fires again once it is.
+  }
+}
+
 export default function BerlinMapInner({
   districts,
 }: {
@@ -297,8 +348,8 @@ export default function BerlinMapInner({
   const [selected, setSelected] = useState<DistrictProperties | null>(null);
   const [selectedState, setSelectedState] = useState<StateSummary | null>(null);
   const [cursor, setCursor] = useState<"auto" | "pointer">("auto");
-  const [activeRegion, setActiveRegion] = useState<string>("berlin");
-  const [zoom, setZoom] = useState(REGIONS[0].zoom);
+  const [activeRegion, setActiveRegion] = useState<string>("");
+  const [zoom, setZoom] = useState(GERMANY_VIEW.zoom);
   const isDark = useIsDarkTheme();
   const mapRef = useRef<MapRef>(null);
 
@@ -440,10 +491,13 @@ export default function BerlinMapInner({
     <>
       <Map
         ref={mapRef}
+        // Opens on the country view, matching the preview the visitor just
+        // clicked. Landing straight in Berlin made the two feel unrelated,
+        // and it hid the fact that the map covers more than one level.
         initialViewState={{
-          longitude: REGIONS[0].center[0],
-          latitude: REGIONS[0].center[1],
-          zoom: REGIONS[0].zoom,
+          longitude: GERMANY_VIEW.center[0],
+          latitude: GERMANY_VIEW.center[1],
+          zoom: GERMANY_VIEW.zoom,
         }}
         minZoom={4.5}
         maxZoom={16}
@@ -453,7 +507,12 @@ export default function BerlinMapInner({
         interactiveLayerIds={[showDistricts ? FILL_LAYER.id! : STATES_FILL.id!]}
         onClick={onClick}
         onZoom={(event) => setZoom(event.viewState.zoom)}
-        onLoad={(event) => setZoom(event.target.getZoom())}
+        onLoad={(event) => {
+          setZoom(event.target.getZoom());
+          hideBasemapStateLabels(event.target);
+        }}
+        // A style swap (light/dark) rebuilds all layers, so re-apply.
+        onStyleData={(event) => hideBasemapStateLabels(event.target)}
         onMouseEnter={() => setCursor("pointer")}
         onMouseLeave={() => setCursor("auto")}
         cursor={cursor}

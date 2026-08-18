@@ -165,23 +165,34 @@ Voraussetzung dafür ist `lib/supabase/static.ts` — ein Client **ohne**
 `cookies()`, denn `cookies()` zwingt eine Route in dynamisches Rendering.
 Für Server Actions und alles Auth-abhängige weiterhin `lib/supabase/server.ts`.
 
-**Eine Karte, zwei Detailstufen:** `/karte` ist die einzige interaktive
-Karte. Sie trägt zwei Geografie-Ebenen, die um `DISTRICT_ZOOM` (8.2)
-ineinander übergehen:
-- **rausgezoomt** — 16 Bundesländer als Choropleth. Berlin trägt den
-  Durchschnitt seiner Bezirks-Mediane, alle anderen bleiben neutral grau.
-  Klick öffnet die Bundesland-Ansicht mit einem Button, der hineinzoomt.
-- **reingezoomt** — die Bezirke mit der Heatmap, dann sind *sie* klickbar.
+**Eine Karte, zwei Detailstufen.** `/karte` ist die einzige interaktive
+Karte und startet in der Deutschlandansicht — genau dem Bild, das die
+Landing-Vorschau zeigt, aus der man kommt. Die Übergabe zwischen den Ebenen
+passiert in einem schmalen Zoomband, damit sie als *eine* Geste lesbar ist:
+die farbige Landesfläche teilt sich in ihre Bezirke.
 
-`interactiveLayerIds` schaltet mit der Zoomstufe um: anklickbar ist immer
-nur, was man auch sehen und treffen kann. Vorher öffnete ein Klick aus der
-Deutschlandansicht ein Detailpanel für einen zwei Pixel großen Bezirk.
-Ein Regionswechsler fliegt zwischen Übersicht und Stadt;
-München/Hamburg/Köln stehen dort schon als `pending`.
+| Zoom | Bundesländer | Bezirke | Beschriftung |
+|---|---|---|---|
+| < 6 | Fläche, klickbar | unsichtbar | keine |
+| 6 – 8.0 | Fläche, klickbar | unsichtbar | Bundesländer |
+| 8.0 – 8.4 | blenden aus | blenden ein | Übergang |
+| > 8.4 | weg | Heatmap, klickbar | Bezirke |
+
+Konstanten: `STATE_LABEL_ZOOM`, `SPLIT_START`, `SPLIT_END`. Berlin trägt den
+Durchschnitt seiner Bezirks-Mediane in derselben Farbskala; Länder ohne
+Daten bleiben neutral grau und sagen das beim Klick auch.
+`interactiveLayerIds` schaltet mit: anklickbar ist immer nur, was man sehen
+und treffen kann.
+
+**Beschriftung gehört uns.** `hideBasemapStateLabels()` schaltet die
+Bundesland-Labels der Basemap ab (`label_state` in positron, `place_state`
+in dark — deshalb Muster statt fester ID, und erneut bei jedem
+`onStyleData`, weil ein Stilwechsel alle Layer neu aufbaut). Sonst stehen
+zwei Beschriftungen übereinander: graue der Basemap, weiße von uns.
 Die Landing zeigt nur `GermanyPreview`: ein statisches, server-gerendertes
-SVG, das als **Link** auf `/karte` dient. Bewusst kein eigenes Overlay mehr —
-vorher öffneten Hero-Karte und "Karte ansehen"-Button zwei verschiedene
-Ansichten derselben Daten.
+SVG, das als **Link** auf `/karte` dient. Der Hero hat genau einen
+Call-to-Action ("Miete prüfen") — ein "Karte ansehen"-Button direkt neben
+einer anklickbaren Karte teilt dieselbe Entscheidung nur in zwei.
 
 **Theming:** Hell/Dunkel über eine `.dark`-Klasse auf `<html>`. Gesetzt wird
 sie von einem Inline-Script im Root-Layout **vor dem ersten Paint** (sonst

@@ -103,8 +103,11 @@ export function GermanyPreview({
         </svg>
       </div>
 
-      <span className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-center gap-1.5 rounded-full border border-border/60 bg-background/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur transition-opacity duration-300 sm:opacity-0 sm:group-hover:opacity-100">
-        Karte öffnen
+      {/* Always visible, not hover-only: this is the sole entry point to the
+          map now, so the affordance has to be legible before you touch it —
+          and on touch devices there is no hover to reveal it. */}
+      <span className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-center gap-1.5 rounded-full border border-border/60 bg-background/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur transition-colors group-hover:border-primary/40">
+        Interaktive Karte öffnen
         <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
       </span>
     </Link>

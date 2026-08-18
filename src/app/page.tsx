@@ -105,20 +105,16 @@ export default async function Home() {
               Mietpreisbremsen-Verstöße. Ausschließlich aus offiziellen Quellen,
               jeder Wert belegt.
             </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            {/* One call to action. The map next to it is its own entry
+                point — a "Karte ansehen" button beside a clickable map only
+                splits the same decision in two. */}
+            <div className="mt-8">
               <Link
                 href="/check"
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
                 <Scale className="size-4" />
                 Miete prüfen
-              </Link>
-              <Link
-                href="/karte"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-border px-6 text-sm font-medium transition-colors hover:bg-accent"
-              >
-                <Map className="size-4" />
-                Karte ansehen
               </Link>
             </div>
           </div>
