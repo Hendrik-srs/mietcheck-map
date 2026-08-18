@@ -157,7 +157,12 @@ const STATES_LABEL: LayerProps = {
     "text-field": ["get", "name"],
     "text-font": ["Noto Sans Regular"],
     "text-size": 12,
-    "text-allow-overlap": false,
+    // Drawn even where something else already sits. Berlin is small and the
+    // basemap stacks motorway shields (A 10, A 11, A 24) right on top of it,
+    // so with collision detection on it was the one state that silently lost
+    // its name. Ours take precedence — a state's identity matters more here
+    // than a road number.
+    "text-allow-overlap": true,
     "text-padding": 6,
   },
   paint: {

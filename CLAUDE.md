@@ -188,6 +188,16 @@ in `lib/data/crowdsourced.ts` und dieselbe Prüfung in
 zu filtern — die sind der Sinn von Crowdsourcing — sondern um Werte
 abzuweisen, die keine Miete sein können, bevor sie Moderationszeit kosten.
 
+**Ergebnisseite: eine Antwort, dann der Kontext.** `/check` liefert zwei
+Urteile, die sich regelmäßig widersprechen — der Marktmedian sagt, was
+verlangt wird, der Mietspiegel, was zulässig ist. Eine Wohnung kann unter
+dem Markt und trotzdem über der Mietpreisbremse liegen. Gleichwertig
+nebeneinander gestellt liest sich das als Widerspruch, deshalb führt die
+rechtlich relevante Aussage (Mietspiegel, sofern Baujahr angegeben), der
+Marktwert folgt als Einordnung, und der Grund für die Lücke steht einmal in
+Klartext im Block „Zwei Maßstäbe". Drei Karten statt vorher sechs, ohne dass
+Information wegfällt.
+
 **Beschriftung gehört uns.** `hideBasemapStateLabels()` schaltet die
 Bundesland-Labels der Basemap ab (`label_state` in positron, `place_state`
 in dark — deshalb Muster statt fester ID, und erneut bei jedem

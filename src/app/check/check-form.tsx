@@ -11,10 +11,8 @@ import {
   ExternalLink,
   Heart,
   RotateCcw,
-  Scale,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -231,6 +229,16 @@ export function CheckForm() {
   );
 }
 
+/**
+ * Result view.
+ *
+ * The check produces two judgements that routinely disagree: the market
+ * median says what landlords currently ask, the Mietspiegel says what the
+ * law considers reasonable. A flat can sit below the market and still be
+ * over the legal limit — showing both as equals read as a contradiction,
+ * so the legally relevant one leads and the market figure follows as
+ * context, with the reason for the gap stated once in plain words.
+ */
 function ResultPanel({ state }: { state: CheckFormState }) {
   if (!state.result) return null;
   const {
@@ -244,10 +252,19 @@ function ResultPanel({ state }: { state: CheckFormState }) {
     mietspiegel,
     shared,
   } = state.result;
-  const style = verdictStyle[assessment.verdict];
+
+  const marketStyle = verdictStyle[assessment.verdict];
+  const legalStyle = mietspiegel ? mietspiegelStyle[mietspiegel.verdict] : null;
+  // The Mietspiegel answers "may they charge this?", which is the question
+  // worth acting on. Without a building year we only have the market view.
+  const lead = mietspiegel && legalStyle ? legalStyle : marketStyle;
+  const leadLabel = mietspiegel ? mietspiegel.verdictLabel : assessment.verdictLabel;
+  const leadText = mietspiegel
+    ? mietspiegel.verdictDescription
+    : assessment.verdictDescription;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-5">
       {shared && (
         <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-400">
           <Heart className="mt-0.5 size-4 shrink-0" />
@@ -258,60 +275,130 @@ function ResultPanel({ state }: { state: CheckFormState }) {
         </div>
       )}
 
-      {/* Verdict */}
-      <Card className={`w-full ring-2 ${style.ring}`}>
+      {/* 1 — The answer, with the number it rests on. */}
+      <Card className={`w-full ring-2 ${lead.ring}`}>
         <CardHeader>
-          <div className={`flex items-center gap-2 ${style.text}`}>
-            <style.Icon className="size-5" />
+          <div className={`flex items-center gap-2 ${lead.text}`}>
+            <lead.Icon className="size-5" />
             <span className="text-xs font-semibold uppercase tracking-wider">
-              {assessment.verdictLabel}
+              {mietspiegel ? "Mietspiegel 2024" : "Marktvergleich"} · {leadLabel}
             </span>
           </div>
           <CardTitle className="text-3xl sm:text-4xl">
-            Du zahlst{" "}
-            <span className={style.text}>{pct(assessment.deviationPct)}</span>
-            <br className="sm:hidden" /> gegenüber dem Markt-Median.
+            {eur2(assessment.pricePerSqm)}
+            <span className="text-xl font-normal text-muted-foreground"> / m²</span>
           </CardTitle>
-          <CardDescription className="text-base">
-            {assessment.verdictDescription}
-          </CardDescription>
+          <CardDescription className="text-base text-pretty">{leadText}</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className={`rounded-lg ${style.bg} px-4 py-3 text-sm`}>
-            <strong>{eur2(assessment.pricePerSqm)} / m²</strong> deine Miete{" "}
-            vs. <strong>{eur2(assessment.comparisonMedian)} / m²</strong> Bezirks-Median in{" "}
-            <strong>{district.parentDistrictName}</strong>.
-            {assessment.monthlyOverpay > 0 && (
-              <>
-                <br />
-                Differenz: ca. <strong>{eur(assessment.monthlyOverpay)}</strong> pro Monat /{" "}
-                <strong>{eur(assessment.yearlyOverpay)}</strong> pro Jahr über dem Median.
-              </>
-            )}
-          </div>
+        <CardContent className="grid gap-4">
+          {mietspiegel && (
+            <MietspiegelScale mietspiegel={mietspiegel} style={lead} />
+          )}
+
+          {mietspiegel?.potentialMietpreisbremseViolation && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+              <strong className="text-amber-700 dark:text-amber-400">
+                Mietpreisbremse:
+              </strong>{" "}
+              Deine Miete liegt über dem Mittelwert + 10 % (
+              {eur2(mietspiegel.mietpreisbremseLimitEurPerSqm)} / m²). Berlin ist
+              Mietpreisbremsen-Gebiet — je nach Ausstattung und Energieeffizienz
+              kann das ein Verstoß sein. Das prüft am besten der{" "}
+              <a
+                href="https://www.berliner-mieterverein.de/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                Berliner Mieterverein
+              </a>{" "}
+              oder eine Fachanwaltskanzlei für Mietrecht.
+            </div>
+          )}
+
+          {!mietspiegel && (
+            <div className="rounded-lg border border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+              Mit dem <strong className="text-foreground">Baujahr</strong> vergleichen
+              wir zusätzlich gegen den Berliner Mietspiegel 2024 — das ist der
+              rechtlich maßgebliche Wert und die Grundlage jeder
+              Mietpreisbremsen-Prüfung.
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Mietspiegel-Vergleich (rechtssicher) */}
-      {mietspiegel && (
-        <MietspiegelCard
-          mietspiegel={mietspiegel}
-          districtName={district.parentDistrictName}
-          buildingYear={buildingYear}
-        />
-      )}
-
-      {/* Details */}
+      {/* 2 — Both yardsticks side by side, and why they differ. */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Details deiner Eingabe</CardTitle>
+          <CardTitle className="text-base">Zwei Maßstäbe</CardTitle>
+          <CardDescription>
+            {mietspiegel
+              ? "Was verlangt wird und was zulässig ist, sind zwei verschiedene Zahlen — genau daran setzt die Mietpreisbremse an."
+              : "Angebotsmieten zeigen, was aktuell verlangt wird — nicht, was rechtlich zulässig ist."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          <Yardstick
+            label="Markt heute"
+            sub={`Angebotsmieten ${district.parentDistrictName}`}
+            value={eur2(assessment.comparisonMedian)}
+            delta={pct(assessment.deviationPct)}
+            deltaTone={assessment.deviationPct > 0 ? "over" : "under"}
+          />
+          {mietspiegel ? (
+            <Yardstick
+              label="Rechtlich üblich"
+              sub={`Mietspiegel 2024 · ${mietspiegel.row.baualterLabel}`}
+              value={eur2(mietspiegel.row.valueMedianEurPerSqm)}
+              delta={`${
+                mietspiegel.deviationFromMedianEurPerSqm > 0 ? "+" : "−"
+              }${eur2(Math.abs(mietspiegel.deviationFromMedianEurPerSqm))} / m²`}
+              deltaTone={
+                mietspiegel.deviationFromMedianEurPerSqm > 0 ? "over" : "under"
+              }
+            />
+          ) : (
+            <div className="flex items-center rounded-lg border border-dashed border-border/60 px-4 py-3 text-sm text-muted-foreground">
+              Baujahr angeben, um den Mietspiegel-Wert zu sehen.
+            </div>
+          )}
+
+          {assessment.monthlyOverpay > 0 && (
+            <p className="text-sm text-muted-foreground sm:col-span-2">
+              Gegenüber dem Marktmedian zahlst du{" "}
+              <strong className="text-foreground">
+                {eur(assessment.monthlyOverpay)}
+              </strong>{" "}
+              mehr im Monat, {eur(assessment.yearlyOverpay)} im Jahr.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 3 — What the answer was computed from, sources included. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Grundlage</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 text-sm">
-          <Row label="Adresse" value={address} note={displayName} />
-          <Row label="Bezirk" value={district.parentDistrictName} />
-          {district.districtLevel === "ortsteil" && (
-            <Row label="Ortsteil" value={district.districtName} />
-          )}
+          <Row
+            label="Adresse"
+            value={address}
+            // Only when it adds something: picking a suggestion makes the
+            // two identical, and the raw geocoder string ("Simon
+            // Textildruck, 42, Boxhagener Straße, …") is noise next to a
+            // clean address the user already recognises.
+            note={displayName !== address ? displayName : undefined}
+          />
+          <Row
+            label="Bezirk"
+            value={district.parentDistrictName}
+            note={
+              district.districtLevel === "ortsteil"
+                ? `Ortsteil ${district.districtName}`
+                : undefined
+            }
+          />
           {district.wohnlage && (
             <Row
               label="Wohnlage"
@@ -323,52 +410,40 @@ function ResultPanel({ state }: { state: CheckFormState }) {
               }
             />
           )}
-          {buildingYear != null && <Row label="Baujahr" value={String(buildingYear)} />}
-          <Row label="Wohnfläche" value={`${sizeSqm.toLocaleString("de-DE")} m²`} />
-          <Row label="Kaltmiete" value={eur(monthlyRent)} />
-          <Row label="Preis pro m²" value={eur2(assessment.pricePerSqm)} />
+          <Row
+            label="Wohnung"
+            value={`${sizeSqm.toLocaleString("de-DE")} m² · ${eur(monthlyRent)} kalt`}
+            note={buildingYear != null ? `Baujahr ${buildingYear}` : undefined}
+          />
+
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            <span>Quellen:</span>
+            {district.rentSourceUrl && district.rentSourceName && (
+              <a
+                href={district.rentSourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 hover:text-foreground"
+              >
+                {district.rentSourceName}
+                {district.rentPeriodEnd &&
+                  ` (${new Date(district.rentPeriodEnd).getFullYear()})`}
+                <ExternalLink className="size-3" />
+              </a>
+            )}
+            {mietspiegel && <span>Berliner Mietspiegel 2024</span>}
+            <Link href="/quellen" className="hover:text-foreground">
+              alle Quellen
+            </Link>
+          </div>
         </CardContent>
       </Card>
 
-      {/* Source */}
-      {district.rentSourceUrl && district.rentSourceName && (
-        <Card>
-          <CardHeader>
-            <Badge variant="secondary" className="w-fit text-xs">
-              Quelle
-            </Badge>
-            <CardTitle className="text-base">{district.rentSourceName}</CardTitle>
-            <CardDescription>
-              {district.rentSourcePublisher}
-              {district.rentPeriodEnd && (
-                <> · Stand {new Date(district.rentPeriodEnd).getFullYear()}</>
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <a
-              href={district.rentSourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-            >
-              Originalquelle ansehen <ExternalLink className="size-3.5" />
-            </a>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Disclaimer */}
-      <div className="rounded-lg border border-border/60 bg-muted/30 p-4 text-xs text-muted-foreground">
-        <strong className="text-foreground">Disclaimer:</strong> Diese Bewertung kombiniert
-        zwei offizielle Quellen — den IBB-Angebotsmieten-Median (Marktvergleich) und ggf.
-        den Berliner Mietspiegel 2024 (rechtssichere Vergleichsmiete) — aber sie ersetzt
-        keine Rechtsberatung. Mietpreisbremsen-Bewertungen hängen zusätzlich von
-        Sondermerkmalen (Ausstattung, energetischer Zustand, Modernisierungs-Stand) ab,
-        die wir hier nicht erfassen. Wende dich für eine rechtssichere Prüfung an den
-        Berliner Mieterverein, eine Mietrechtsberatung oder eine:n Fachanwält:in für
-        Mietrecht.
-      </div>
+      <p className="text-xs text-muted-foreground">
+        Diese Bewertung ersetzt keine Rechtsberatung. Ob eine Miete zulässig ist,
+        hängt zusätzlich von Sondermerkmalen ab — Ausstattung, energetischer
+        Zustand, Modernisierungen —, die hier nicht erfasst werden.
+      </p>
 
       <div className="flex flex-wrap gap-3">
         <Link href="/check" className={buttonVariants({ variant: "outline", size: "lg" })}>
@@ -380,6 +455,42 @@ function ResultPanel({ state }: { state: CheckFormState }) {
           <ArrowRight />
         </Link>
       </div>
+    </div>
+  );
+}
+
+/** One of the two comparison figures, shown as a compact stat. */
+function Yardstick({
+  label,
+  sub,
+  value,
+  delta,
+  deltaTone,
+}: {
+  label: string;
+  sub: string;
+  value: string;
+  delta: string;
+  deltaTone: "over" | "under";
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 px-4 py-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+        <span
+          className={`text-xs font-medium tabular-nums ${
+            deltaTone === "over"
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-emerald-700 dark:text-emerald-400"
+          }`}
+        >
+          {delta}
+        </span>
+      </div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>
     </div>
   );
 }
@@ -444,16 +555,18 @@ const mietspiegelStyle: Record<
   },
 };
 
-function MietspiegelCard({
+/**
+ * The Mietspiegel range as a bar: lower bound, mean, the +10 % line the
+ * Mietpreisbremse hangs on, and where this flat sits. It replaces a
+ * paragraph of numbers with one glance.
+ */
+function MietspiegelScale({
   mietspiegel,
-  districtName,
-  buildingYear,
+  style,
 }: {
   mietspiegel: NonNullable<NonNullable<CheckFormState["result"]>["mietspiegel"]>;
-  districtName: string;
-  buildingYear: number | null;
+  style: { bg: string };
 }) {
-  const s = mietspiegelStyle[mietspiegel.verdict];
   const r = mietspiegel.row;
   const lower = r.valueLowerEurPerSqm;
   const median = r.valueMedianEurPerSqm;
@@ -461,104 +574,66 @@ function MietspiegelCard({
   const userPrice = mietspiegel.pricePerSqm;
   const limit = mietspiegel.mietpreisbremseLimitEurPerSqm;
 
-  // Position 0..100 % auf der unter-bis-oberen-Spanne
   const range = upper - lower;
-  const userPosition =
-    range > 0 ? Math.max(0, Math.min(100, ((userPrice - lower) / range) * 100)) : 50;
-  const medianPosition =
-    range > 0 ? Math.max(0, Math.min(100, ((median - lower) / range) * 100)) : 50;
-  const limitPosition =
-    range > 0 ? Math.max(0, Math.min(100, ((limit - lower) / range) * 100)) : 60;
+  const position = (value: number) =>
+    range > 0 ? Math.max(0, Math.min(100, ((value - lower) / range) * 100)) : 50;
 
   return (
-    <Card className={`w-full ring-2 ${s.ring}`}>
-      <CardHeader>
-        <div className={`flex items-center gap-2 ${s.text}`}>
-          <Scale className="size-5" />
-          <span className="text-xs font-semibold uppercase tracking-wider">
-            Mietspiegel-Vergleich · {mietspiegel.verdictLabel}
-          </span>
+    <div className="grid gap-3">
+      <div className="grid gap-2">
+        <div className="relative h-3 rounded-full bg-gradient-to-r from-emerald-500/30 via-sky-500/30 to-destructive/30">
+          <div
+            className="absolute top-0 h-3 w-px bg-foreground/60"
+            style={{ left: `${position(median)}%` }}
+            aria-hidden
+          />
+          <div
+            className="absolute top-0 h-3 w-px bg-amber-600/80"
+            style={{ left: `${position(limit)}%` }}
+            aria-hidden
+          />
+          <div
+            className="absolute -top-1 -ml-2 size-5 rounded-full border-2 border-background shadow ring-1 ring-foreground/20 transition-[left] duration-500 ease-out"
+            style={{
+              left: `${position(userPrice)}%`,
+              background:
+                mietspiegel.verdict === "ueber_spanne"
+                  ? "var(--destructive)"
+                  : mietspiegel.verdict === "ueber_mietpreisbremse"
+                    ? "rgb(245 158 11)"
+                    : "rgb(14 165 233)",
+            }}
+            aria-label={`Deine Miete: ${eur2(userPrice)} pro m²`}
+          />
         </div>
-        <CardTitle className="text-xl">
-          {mietspiegel.verdictDescription}
-        </CardTitle>
-        <CardDescription>
-          Berliner Mietspiegel 2024, Wohnlage {wohnlageLabels[r.wohnlage]} ·{" "}
-          {r.baualterLabel}
-          {r.westOst ? ` (${r.westOst === "ost" ? "Ost" : "West"})` : ""} ·{" "}
-          {r.sizeSqmLabel} · Bezirk {districtName}
-          {buildingYear != null ? ` · Baujahr ${buildingYear}` : ""}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        {/* Spannen-Visualisierung */}
-        <div className="grid gap-2">
-          <div className="relative h-3 rounded-full bg-gradient-to-r from-emerald-500/30 via-sky-500/30 to-destructive/30">
-            {/* Mittelwert-Marker */}
-            <div
-              className="absolute top-0 h-3 w-px bg-foreground/60"
-              style={{ left: `${medianPosition}%` }}
-              aria-hidden
-            />
-            {/* Mietpreisbremse-Schwelle (Mittel + 10%) */}
-            <div
-              className="absolute top-0 h-3 w-px bg-amber-600/80"
-              style={{ left: `${limitPosition}%` }}
-              aria-hidden
-            />
-            {/* User-Marker */}
-            <div
-              className="absolute -top-1 -ml-2 size-5 rounded-full border-2 border-background shadow ring-1 ring-foreground/20"
-              style={{
-                left: `${userPosition}%`,
-                background:
-                  mietspiegel.verdict === "ueber_spanne"
-                    ? "var(--destructive)"
-                    : mietspiegel.verdict === "ueber_mietpreisbremse"
-                      ? "rgb(245 158 11)"
-                      : "rgb(14 165 233)",
-              }}
-              aria-label={`Deine Miete: ${eur2(userPrice)} pro m²`}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{eur2(lower)} (untere Spanne)</span>
-            <span>{eur2(median)} Mittel</span>
-            <span>{eur2(upper)} (obere Spanne)</span>
-          </div>
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>{eur2(lower)} untere Spanne</span>
+          <span>{eur2(median)} Mittel</span>
+          <span>{eur2(upper)} obere Spanne</span>
         </div>
+      </div>
 
-        <div className={`rounded-lg ${s.bg} px-4 py-3 text-sm`}>
-          <strong>{eur2(userPrice)} / m²</strong> deine Miete vs.{" "}
-          <strong>{eur2(median)} / m²</strong> Mietspiegel-Mittelwert.
-          {mietspiegel.deviationFromMedianEurPerSqm > 0 ? (
-            <>
-              <br />
-              Differenz: <strong>+{eur2(mietspiegel.deviationFromMedianEurPerSqm)} / m²</strong> über
-              dem Mittelwert (+{eur(mietspiegel.monthlyDeviationFromMedian)} pro Monat / +
-              {eur(mietspiegel.yearlyDeviationFromMedian)} pro Jahr).
-            </>
-          ) : (
-            <>
-              <br />
-              Differenz: <strong>{eur2(Math.abs(mietspiegel.deviationFromMedianEurPerSqm))} / m²</strong> unter
-              dem Mittelwert.
-            </>
-          )}
-        </div>
-
-        {mietspiegel.potentialMietpreisbremseViolation && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
-            <strong className="text-amber-700 dark:text-amber-400">
-              Mietpreisbremse-Hinweis:
+      <p className={`rounded-lg ${style.bg} px-4 py-2.5 text-sm`}>
+        Vergleichsmiete für {r.sizeSqmLabel}, Baujahr {r.baualterLabel}
+        {r.westOst ? ` (${r.westOst === "ost" ? "Ost" : "West"})` : ""}, Wohnlage{" "}
+        {wohnlageLabels[r.wohnlage]}:{" "}
+        <strong>{eur2(median)} / m²</strong>
+        {mietspiegel.deviationFromMedianEurPerSqm > 0 ? (
+          <>
+            {" "}— du zahlst{" "}
+            <strong>+{eur2(mietspiegel.deviationFromMedianEurPerSqm)} / m²</strong>{" "}
+            darüber, also {eur(mietspiegel.monthlyDeviationFromMedian)} im Monat.
+          </>
+        ) : (
+          <>
+            {" "}— du zahlst{" "}
+            <strong>
+              {eur2(Math.abs(mietspiegel.deviationFromMedianEurPerSqm))} / m²
             </strong>{" "}
-            Deine Miete liegt über Mittelwert + 10 % ({eur2(limit)} / m²). Berlin ist
-            Mietpreisbremsen-Gebiet — abhängig von Ausstattung und Energieeffizienz
-            kann das ein Verstoß sein. Eine Beratung beim Berliner Mieterverein oder
-            einer Fachanwaltskanzlei für Mietrecht wird empfohlen.
-          </div>
+            darunter.
+          </>
         )}
-      </CardContent>
-    </Card>
+      </p>
+    </div>
   );
 }
