@@ -123,6 +123,45 @@ export function labelAnchor(frame: Frame, geometry: Geometry): [number, number] 
   return [(minX + maxX) / 2, (minY + maxY) / 2];
 }
 
+/**
+ * Label anchor in lon/lat, for callers without a projected frame.
+ *
+ * PostGIS supplies a proper ST_PointOnSurface anchor; this is the fallback
+ * for when that column isn't populated yet. Uses the bounding-box centre of
+ * the largest ring, which for a MultiPolygon with an exclave stays on the
+ * main body — unlike a centroid over all parts.
+ */
+export function largestRingCenter(geometry: Geometry): [number, number] | null {
+  const rings = ringsOf(geometry);
+  if (rings.length === 0) return null;
+
+  let largest = rings[0];
+  let largestArea = -Infinity;
+  for (const ring of rings) {
+    let area = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      area += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+    }
+    const absolute = Math.abs(area / 2);
+    if (absolute > largestArea) {
+      largestArea = absolute;
+      largest = ring;
+    }
+  }
+
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+  for (const [lon, lat] of largest) {
+    if (lon < minLon) minLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lon > maxLon) maxLon = lon;
+    if (lat > maxLat) maxLat = lat;
+  }
+  return [(minLon + maxLon) / 2, (minLat + maxLat) / 2];
+}
+
 /** Projected bounding box of a set of geometries, in viewBox units. */
 export function svgBoundsOf(frame: Frame, geometries: Geometry[]) {
   const b = boundsOf(geometries);

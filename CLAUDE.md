@@ -40,16 +40,16 @@ anonymem Opt-in-Beitrag) · Keep-Alive (Cron + Heartbeat)
   variables → Actions). Workflow läuft sonst automatisch monatlich.
 
 **Bekannte Caveats / TODOs**
-- **MapLibre-Tiles sind in der Preview-Umgebung nicht darstellbar**: `/karte`
-  bleibt dort leer (auch ohne Code-Änderung), der Style-JSON lädt aber
-  sauber. Heißt: Änderungen an `berlin-map-inner.tsx` lassen sich lokal nur
-  bedingt visuell prüfen — nach Deploy auf der Live-URL gegenchecken.
-  Betrifft aktuell den themenabhängigen Basemap-Wechsel (positron/dark).
+- **MapLibre-Tiles laden in der Preview-Umgebung unzuverlässig**: mal
+  rendern Basemap und Glyphen, mal bleibt die Fläche leer — unabhängig vom
+  Code. Eigene GeoJSON-Layer (Bezirke, Bundesländer) zeichnen trotzdem.
+  Heißt: `berlin-map-inner.tsx` nach Deploy auf der Live-URL gegenchecken,
+  besonders Basemap-Wechsel (positron/dark) und Label-Layer.
 - **React 19 hoisted `<title>`**: In SVGs darf kein `<title>`-Kind stehen —
   React behandelt es als Document-Metadata und verschiebt es in den `<head>`,
   was die Hydration bricht (React-Error #418). Für SVG-Tooltips/a11y
   stattdessen `aria-label` nutzen. Kostete in dieser Session eine
-  Debug-Runde, siehe `berlin-hero-map.tsx`.
+  Debug-Runde, siehe `germany-preview.tsx`.
 - **Crowdsourced-Mieten ungeprüft auf Plausibilität**: `/check` mit
   Opt-in-Häkchen akzeptiert aktuell jeden Wert (z.B. 1 € oder 100 Mio €) und
   speichert ihn als `pending`. Verzerrt zwar nicht die Karte (Approved-Flow),
@@ -63,11 +63,6 @@ anonymem Opt-in-Beitrag) · Keep-Alive (Cron + Heartbeat)
   Nominatim Search-API (mit Debounce) oder Photon (Komoot, basiert auf
   Nominatim, hat Autocomplete out-of-the-box). Bonus: Lat/Lon kommt direkt
   aus dem Vorschlag, kein zweiter Geocode-Roundtrip nötig.
-- **Pankow-Polygon Label-Position**: auf `/karte` zeigt Pankow gelegentlich
-  nur den Namen ohne Farbfüllung an, und das Label sitzt dann an einer
-  falschen Stelle (vermutlich Pankow-Centroid-Berechnung bei MultiPolygon
-  mit einer Exklave, die ST_Centroid außerhalb der Hauptfläche legt). Bei
-  Refactor von MapLibre-Layern oder Label-Layern prüfen.
 - **West/Ost-Sonderfall im Mietspiegel** (Bj. 1973–1990): konservativ pro Bezirk
   inferiert, weil das offizielle Straßenverzeichnis nur als PDF im Amtsblatt
   existiert. Ungenauigkeit ~5 % der Wohnungen mit diesem Baujahr. Fix wäre
@@ -126,13 +121,13 @@ src/
 
 components/
 ├── theme-toggle.tsx              # Hell/Dunkel; Klasse setzt Inline-Script im Layout
-└── map/explore-map.tsx           # Landing-Karte: Deutschland → Berlin (Zoom-Overlay)
+└── map/germany-preview.tsx       # Landing: statisches SVG, verlinkt auf /karte
 
 scripts/ingest/                   # berlin-districts.ts, berlin-ortsteile.ts,
                                   # berlin-ibb.ts, berlin-wohnlagen.ts,
                                   # berlin-mietspiegel-2024.ts
                                   # data/berlin-mietspiegel-2024.json (eingecheckt)
-supabase/migrations/              # 0001..0014 (manuell im SQL Editor anwenden)
+supabase/migrations/              # 0001..0015 (manuell im SQL Editor anwenden)
 scripts/build-germany-geometry.ts # einmalig: Eurostat NUTS → germany-states.json
 .github/workflows/keep-alive.yml  # Daily Ping + Heartbeat-Commit alle 30 Tage
 .github/workflows/auto-ingest.yml # Monatliche Re-Ingestion + täglicher Drift-Check
@@ -164,12 +159,15 @@ Voraussetzung dafür ist `lib/supabase/static.ts` — ein Client **ohne**
 `cookies()`, denn `cookies()` zwingt eine Route in dynamisches Rendering.
 Für Server Actions und alles Auth-abhängige weiterhin `lib/supabase/server.ts`.
 
-**Zwei Karten, klar getrennt:** Die Landing zeigt `ExploreMap` — ein
-handgebautes SVG (Deutschland + Berlin in *einem* projizierten
-Koordinatenraum), das per CSS-Transform von der Bundesland-Übersicht in die
-Bezirke zoomt. Kein MapLibre, damit die Startseite ohne Kartenbibliothek und
-ohne Tiles sofort steht. `/karte` bleibt das interaktive Werkzeug mit
-MapLibre und ist aus dem Overlay heraus verlinkt.
+**Eine Karte, eine Vorschau:** `/karte` ist die einzige interaktive Karte.
+Sie trägt zwei Geografie-Ebenen — die 16 Bundesländer als Kontext und die
+Berliner Bezirke mit der Heatmap —, die zoomabhängig ineinander übergehen
+(`DISTRICT_ZOOM`). Ein Regionswechsler fliegt zwischen Deutschland-Übersicht
+und Stadt; München/Hamburg/Köln stehen dort schon als `pending`.
+Die Landing zeigt nur `GermanyPreview`: ein statisches, server-gerendertes
+SVG, das als **Link** auf `/karte` dient. Bewusst kein eigenes Overlay mehr —
+vorher öffneten Hero-Karte und "Karte ansehen"-Button zwei verschiedene
+Ansichten derselben Daten.
 
 **Theming:** Hell/Dunkel über eine `.dark`-Klasse auf `<html>`. Gesetzt wird
 sie von einem Inline-Script im Root-Layout **vor dem ersten Paint** (sonst

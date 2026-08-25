@@ -10,7 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-import { ExploreMap } from "@/components/map/explore-map";
+import { GermanyPreview } from "@/components/map/germany-preview";
 import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -130,7 +130,7 @@ export default async function Home() {
                 Stand {stats.yearTo ?? "2025"}
               </p>
             </div>
-            <ExploreMap
+            <GermanyPreview
               states={germanyStates as FeatureCollection<Geometry, { id: string; name: string }>}
               districts={districts}
             />

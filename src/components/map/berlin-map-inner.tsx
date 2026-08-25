@@ -9,7 +9,11 @@ import {
   Source,
   type LayerProps,
   type MapLayerMouseEvent,
+  type MapRef,
 } from "react-map-gl/maplibre";
+import { useRef } from "react";
+import type { FeatureCollection, Geometry, Point } from "geojson";
+import { Check, ChevronDown, Maximize2 } from "lucide-react";
 
 import { RentHistoryChart } from "@/components/map/rent-history-chart";
 import {
@@ -19,6 +23,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import germanyStates from "@/lib/data/germany-states.json";
+import { largestRingCenter } from "@/lib/geo-projection";
 import { RENT_NO_DATA_COLOR, RENT_STOPS, rentGradientCss } from "@/lib/rent-color";
 import { useIsDarkTheme } from "@/lib/use-theme";
 import type {
@@ -26,6 +32,104 @@ import type {
   DistrictsFeatureCollection,
   RentHistoryPoint,
 } from "@/lib/data/districts";
+
+/**
+ * The one interactive map.
+ *
+ * It carries two layers of geography: the federal states as country-level
+ * context, and Berlin's districts with the rent choropleth. Zooming out
+ * shows where the project stands nationally, zooming in shows the data —
+ * which is why the landing page only links here instead of opening a
+ * second, different map of its own.
+ */
+
+/** Below this zoom the country view dominates; above it, the districts. */
+const DISTRICT_ZOOM = 8.2;
+
+interface Region {
+  id: string;
+  name: string;
+  /** null once a region has data; otherwise shown as coming later. */
+  pending: boolean;
+  center: [number, number];
+  zoom: number;
+}
+
+const REGIONS: Region[] = [
+  { id: "berlin", name: "Berlin", pending: false, center: [13.405, 52.52], zoom: 9.4 },
+  { id: "hamburg", name: "Hamburg", pending: true, center: [9.993, 53.551], zoom: 9.6 },
+  { id: "muenchen", name: "München", pending: true, center: [11.576, 48.137], zoom: 9.8 },
+  { id: "koeln", name: "Köln", pending: true, center: [6.96, 50.937], zoom: 9.8 },
+];
+
+const GERMANY_VIEW = { center: [10.45, 51.16] as [number, number], zoom: 4.9 };
+
+const STATES_FILL: LayerProps = {
+  id: "states-fill",
+  type: "fill",
+  paint: {
+    "fill-color": ["case", ["==", ["get", "name"], "Berlin"], "#f59e0b", "#94a3b8"],
+    // Fades out as the districts take over, so the two never fight.
+    "fill-opacity": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      4.5,
+      0.35,
+      DISTRICT_ZOOM,
+      0.1,
+      DISTRICT_ZOOM + 1,
+      0,
+    ],
+  },
+};
+
+const STATES_LINE: LayerProps = {
+  id: "states-line",
+  type: "line",
+  paint: {
+    "line-color": "#475569",
+    "line-width": 1,
+    "line-opacity": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      4.5,
+      0.8,
+      DISTRICT_ZOOM,
+      0.35,
+      DISTRICT_ZOOM + 1,
+      0,
+    ],
+  },
+};
+
+const STATES_LABEL: LayerProps = {
+  id: "states-label",
+  type: "symbol",
+  layout: {
+    "text-field": ["get", "name"],
+    "text-font": ["Noto Sans Regular"],
+    "text-size": 12,
+    "text-allow-overlap": false,
+  },
+  paint: {
+    "text-color": "#475569",
+    "text-halo-color": "#ffffff",
+    "text-halo-width": 1.5,
+    "text-opacity": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      5,
+      1,
+      DISTRICT_ZOOM - 0.5,
+      1,
+      DISTRICT_ZOOM + 0.5,
+      0,
+    ],
+  },
+};
 
 const FILL_LAYER: LayerProps = {
   id: "districts-fill",
@@ -42,7 +146,15 @@ const FILL_LAYER: LayerProps = {
         ...RENT_STOPS.flat(),
       ],
     ],
-    "fill-opacity": 0.7,
+    "fill-opacity": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      DISTRICT_ZOOM - 1.5,
+      0.55,
+      DISTRICT_ZOOM,
+      0.75,
+    ],
   },
 };
 
@@ -52,9 +164,15 @@ const LINE_LAYER: LayerProps = {
   paint: {
     "line-color": "#1e3a8a",
     "line-width": 1,
+    "line-opacity": 0.6,
   },
 };
 
+/**
+ * Labels come from a dedicated point source, not from the polygons.
+ * MapLibre renders one symbol per polygon *part*, so a MultiPolygon with an
+ * exclave gets labelled repeatedly — that is what showed "Pankow" twice.
+ */
 const LABEL_LAYER: LayerProps = {
   id: "districts-label",
   type: "symbol",
@@ -63,11 +181,21 @@ const LABEL_LAYER: LayerProps = {
     "text-font": ["Noto Sans Regular"],
     "text-size": 12,
     "text-allow-overlap": false,
+    "text-padding": 4,
   },
   paint: {
     "text-color": "#0f172a",
     "text-halo-color": "#ffffff",
     "text-halo-width": 1.5,
+    "text-opacity": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      DISTRICT_ZOOM - 0.5,
+      0,
+      DISTRICT_ZOOM + 0.3,
+      1,
+    ],
   },
 };
 
@@ -78,6 +206,11 @@ const EUR = new Intl.NumberFormat("de-DE", {
   maximumFractionDigits: 2,
 });
 const NUM = new Intl.NumberFormat("de-DE");
+
+const BASEMAP = {
+  light: "https://tiles.openfreemap.org/styles/positron",
+  dark: "https://tiles.openfreemap.org/styles/dark",
+} as const;
 
 function formatPeriod(start: string | null, end: string | null): string | null {
   if (!start || !end) return null;
@@ -103,40 +236,26 @@ function parseDistrictProperties(
   } else if (Array.isArray(rawHistory)) {
     history = rawHistory as RentHistoryPoint[];
   }
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
   return {
     id: String(props.id ?? ""),
     name: String(props.name ?? "Unbekannter Bezirk"),
     level: (props.level as DistrictProperties["level"]) ?? "bezirk",
-    rent_median: typeof props.rent_median === "number" ? props.rent_median : null,
-    rent_sample_size:
-      typeof props.rent_sample_size === "number" ? props.rent_sample_size : null,
-    rent_period_start:
-      typeof props.rent_period_start === "string" ? props.rent_period_start : null,
-    rent_period_end:
-      typeof props.rent_period_end === "string" ? props.rent_period_end : null,
-    rent_metric: typeof props.rent_metric === "string" ? props.rent_metric : null,
-    rent_source_id:
-      typeof props.rent_source_id === "string" ? props.rent_source_id : null,
-    rent_source_name:
-      typeof props.rent_source_name === "string" ? props.rent_source_name : null,
-    rent_source_publisher:
-      typeof props.rent_source_publisher === "string"
-        ? props.rent_source_publisher
-        : null,
-    rent_source_url:
-      typeof props.rent_source_url === "string" ? props.rent_source_url : null,
+    label_lon: num(props.label_lon),
+    label_lat: num(props.label_lat),
+    rent_median: num(props.rent_median),
+    rent_sample_size: num(props.rent_sample_size),
+    rent_period_start: str(props.rent_period_start),
+    rent_period_end: str(props.rent_period_end),
+    rent_metric: str(props.rent_metric),
+    rent_source_id: str(props.rent_source_id),
+    rent_source_name: str(props.rent_source_name),
+    rent_source_publisher: str(props.rent_source_publisher),
+    rent_source_url: str(props.rent_source_url),
     rent_history: history,
   };
 }
-
-/**
- * OpenFreeMap ships a light and a dark basemap. Picking one to match the
- * site theme keeps a dark page from being lit up by a white map.
- */
-const BASEMAP = {
-  light: "https://tiles.openfreemap.org/styles/positron",
-  dark: "https://tiles.openfreemap.org/styles/dark",
-} as const;
 
 export default function BerlinMapInner({
   districts,
@@ -145,12 +264,18 @@ export default function BerlinMapInner({
 }) {
   const [selected, setSelected] = useState<DistrictProperties | null>(null);
   const [cursor, setCursor] = useState<"auto" | "pointer">("auto");
+  const [activeRegion, setActiveRegion] = useState<string>("berlin");
   const isDark = useIsDarkTheme();
+  const mapRef = useRef<MapRef>(null);
 
   const onClick = useCallback((e: MapLayerMouseEvent) => {
     const feature = e.features?.[0];
     if (!feature) return;
     setSelected(parseDistrictProperties(feature.properties));
+  }, []);
+
+  const flyTo = useCallback((center: [number, number], zoom: number) => {
+    mapRef.current?.flyTo({ center, zoom, duration: 1400, essential: true });
   }, []);
 
   const stats = useMemo(() => {
@@ -165,11 +290,39 @@ export default function BerlinMapInner({
     };
   }, [districts]);
 
+  // One point per district, positioned by the anchor PostGIS computed.
+  // Falls back to a locally derived anchor when the column isn't populated,
+  // so the map stays labelled either way.
+  const labelPoints = useMemo<FeatureCollection<Point, { name: string }>>(
+    () => ({
+      type: "FeatureCollection",
+      features: districts.features.flatMap((f) => {
+        const { label_lon: lon, label_lat: lat, name } = f.properties;
+        const coordinates =
+          lon != null && lat != null ? [lon, lat] : largestRingCenter(f.geometry);
+        if (!coordinates) return [];
+        return [
+          {
+            type: "Feature" as const,
+            geometry: { type: "Point" as const, coordinates },
+            properties: { name },
+          },
+        ];
+      }),
+    }),
+    [districts],
+  );
+
   return (
     <>
       <Map
-        initialViewState={{ longitude: 13.405, latitude: 52.52, zoom: 9.4 }}
-        minZoom={8}
+        ref={mapRef}
+        initialViewState={{
+          longitude: REGIONS[0].center[0],
+          latitude: REGIONS[0].center[1],
+          zoom: REGIONS[0].zoom,
+        }}
+        minZoom={4.5}
         maxZoom={16}
         style={{ width: "100%", height: "100%" }}
         mapStyle={isDark ? BASEMAP.dark : BASEMAP.light}
@@ -179,16 +332,39 @@ export default function BerlinMapInner({
         onMouseLeave={() => setCursor("auto")}
         cursor={cursor}
       >
+        <Source
+          id="states"
+          type="geojson"
+          data={germanyStates as FeatureCollection<Geometry, { name: string }>}
+        >
+          <Layer {...STATES_FILL} />
+          <Layer {...STATES_LINE} />
+          <Layer {...STATES_LABEL} />
+        </Source>
+
         <Source id="districts" type="geojson" data={districts}>
           <Layer {...FILL_LAYER} />
           <Layer {...LINE_LAYER} />
+        </Source>
+
+        <Source id="district-labels" type="geojson" data={labelPoints}>
           <Layer {...LABEL_LAYER} />
         </Source>
       </Map>
 
-      {stats && (
-        <Legend min={stats.min} max={stats.max} count={stats.count} />
-      )}
+      <RegionSwitcher
+        active={activeRegion}
+        onSelect={(region) => {
+          setActiveRegion(region.id);
+          flyTo(region.center, region.zoom);
+        }}
+        onOverview={() => {
+          setActiveRegion("");
+          flyTo(GERMANY_VIEW.center, GERMANY_VIEW.zoom);
+        }}
+      />
+
+      {stats && <Legend min={stats.min} max={stats.max} count={stats.count} />}
 
       <Sheet
         open={selected !== null}
@@ -204,20 +380,82 @@ export default function BerlinMapInner({
   );
 }
 
-function Legend({
-  min,
-  max,
-  count,
+function RegionSwitcher({
+  active,
+  onSelect,
+  onOverview,
 }: {
-  min: number;
-  max: number;
-  count: number;
+  active: string;
+  onSelect: (region: Region) => void;
+  onOverview: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const current = REGIONS.find((r) => r.id === active);
+
+  return (
+    <div className="pointer-events-auto absolute top-4 left-1/2 z-10 -translate-x-1/2">
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex h-9 items-center gap-2 rounded-full border bg-background/90 px-4 text-sm font-medium shadow-sm backdrop-blur transition-colors hover:bg-accent"
+        >
+          {current ? current.name : "Deutschland"}
+          <ChevronDown
+            className={`size-4 text-muted-foreground transition-transform ${
+              open ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+
+        {open && (
+          <div className="absolute top-11 left-1/2 w-56 -translate-x-1/2 overflow-hidden rounded-lg border bg-background/95 shadow-lg backdrop-blur">
+            <button
+              type="button"
+              onClick={() => {
+                onOverview();
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+            >
+              <Maximize2 className="size-3.5 text-muted-foreground" />
+              Ganz Deutschland
+            </button>
+            <div className="h-px bg-border" />
+            {REGIONS.map((region) => (
+              <button
+                key={region.id}
+                type="button"
+                disabled={region.pending}
+                onClick={() => {
+                  onSelect(region);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+              >
+                <span className="flex items-center gap-2">
+                  {region.id === active && <Check className="size-3.5 text-primary" />}
+                  <span className={region.id === active ? "" : "ml-5"}>
+                    {region.name}
+                  </span>
+                </span>
+                {region.pending && (
+                  <span className="text-xs text-muted-foreground">geplant</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Legend({ min, max, count }: { min: number; max: number; count: number }) {
   return (
     <div className="pointer-events-auto absolute right-4 bottom-16 z-10 w-60 rounded-lg border bg-background/90 p-3 text-xs shadow-md backdrop-blur">
-      <div className="mb-1 font-medium text-foreground">
-        Median-Angebotsmiete
-      </div>
+      <div className="mb-1 font-medium text-foreground">Median-Angebotsmiete</div>
       <div className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">
         € / m² Nettokalt · {count} Bezirke
       </div>
@@ -307,9 +545,7 @@ function DistrictDetails({ district }: { district: DistrictProperties }) {
             {district.rent_source_publisher && (
               <div>
                 <dt className="text-muted-foreground">Herausgeber</dt>
-                <dd className="text-foreground">
-                  {district.rent_source_publisher}
-                </dd>
+                <dd className="text-foreground">{district.rent_source_publisher}</dd>
               </div>
             )}
           </dl>
@@ -317,8 +553,8 @@ function DistrictDetails({ district }: { district: DistrictProperties }) {
 
         <p className="text-[11px] text-muted-foreground">
           Angebotsmiete = aus Online-Inseraten ermittelte Median-Miete für neu
-          angebotene Wohnungen. Sie liegt typischerweise über der
-          Bestandsmiete (= laufende Mieten in bestehenden Verträgen).
+          angebotene Wohnungen. Sie liegt typischerweise über der Bestandsmiete
+          (= laufende Mieten in bestehenden Verträgen).
         </p>
       </div>
     </>

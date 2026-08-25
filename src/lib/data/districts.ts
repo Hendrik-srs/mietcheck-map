@@ -12,6 +12,14 @@ export interface DistrictProperties {
   id: string;
   name: string;
   level: "bezirk" | "ortsteil" | "plz";
+  /**
+   * Explicit label anchor from PostGIS (ST_PointOnSurface of the largest
+   * part). Labels are drawn from a separate point source rather than the
+   * polygons, because MapLibre places one symbol per polygon *part* — a
+   * district with an exclave would otherwise be labelled twice.
+   */
+  label_lon: number | null;
+  label_lat: number | null;
   rent_median: number | null;
   rent_sample_size: number | null;
   rent_period_start: string | null;
