@@ -45,6 +45,12 @@ anonymem Opt-in-Beitrag) · Keep-Alive (Cron + Heartbeat)
   Code. Eigene GeoJSON-Layer (Bezirke, Bundesländer) zeichnen trotzdem.
   Heißt: `berlin-map-inner.tsx` nach Deploy auf der Live-URL gegenchecken,
   besonders Basemap-Wechsel (positron/dark) und Label-Layer.
+- **MapLibre beschriftet pro Polygon-*Teil***: Ein Symbol-Layer auf einer
+  Polygon-Quelle rendert den Namen für jeden Teil eines MultiPolygons —
+  Schleswig-Holstein achtmal (Inseln), Pankow zweimal (Vermessungs-Splitter).
+  Beschriftungen laufen deshalb über eigene **Punkt-Quellen** mit je einem
+  Anker pro Gebiet (`label_lon/lat` aus PostGIS bzw. `labelLon/labelLat` im
+  Bundesland-JSON). Bei neuen Layern gleich so anlegen.
 - **React 19 hoisted `<title>`**: In SVGs darf kein `<title>`-Kind stehen —
   React behandelt es als Document-Metadata und verschiebt es in den `<head>`,
   was die Hydration bricht (React-Error #418). Für SVG-Tooltips/a11y
@@ -159,11 +165,19 @@ Voraussetzung dafür ist `lib/supabase/static.ts` — ein Client **ohne**
 `cookies()`, denn `cookies()` zwingt eine Route in dynamisches Rendering.
 Für Server Actions und alles Auth-abhängige weiterhin `lib/supabase/server.ts`.
 
-**Eine Karte, eine Vorschau:** `/karte` ist die einzige interaktive Karte.
-Sie trägt zwei Geografie-Ebenen — die 16 Bundesländer als Kontext und die
-Berliner Bezirke mit der Heatmap —, die zoomabhängig ineinander übergehen
-(`DISTRICT_ZOOM`). Ein Regionswechsler fliegt zwischen Deutschland-Übersicht
-und Stadt; München/Hamburg/Köln stehen dort schon als `pending`.
+**Eine Karte, zwei Detailstufen:** `/karte` ist die einzige interaktive
+Karte. Sie trägt zwei Geografie-Ebenen, die um `DISTRICT_ZOOM` (8.2)
+ineinander übergehen:
+- **rausgezoomt** — 16 Bundesländer als Choropleth. Berlin trägt den
+  Durchschnitt seiner Bezirks-Mediane, alle anderen bleiben neutral grau.
+  Klick öffnet die Bundesland-Ansicht mit einem Button, der hineinzoomt.
+- **reingezoomt** — die Bezirke mit der Heatmap, dann sind *sie* klickbar.
+
+`interactiveLayerIds` schaltet mit der Zoomstufe um: anklickbar ist immer
+nur, was man auch sehen und treffen kann. Vorher öffnete ein Klick aus der
+Deutschlandansicht ein Detailpanel für einen zwei Pixel großen Bezirk.
+Ein Regionswechsler fliegt zwischen Übersicht und Stadt;
+München/Hamburg/Köln stehen dort schon als `pending`.
 Die Landing zeigt nur `GermanyPreview`: ein statisches, server-gerendertes
 SVG, das als **Link** auf `/karte` dient. Bewusst kein eigenes Overlay mehr —
 vorher öffneten Hero-Karte und "Karte ansehen"-Button zwei verschiedene

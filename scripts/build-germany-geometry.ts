@@ -123,6 +123,45 @@ function round(geometry: Geometry, decimals = 4): Geometry {
   return geometry;
 }
 
+
+/**
+ * Centre of the largest ring, used as the label anchor.
+ *
+ * Averaging over all parts would drag Schleswig-Holstein's label into the
+ * North Sea; the largest part keeps it on the mainland.
+ */
+function largestPartCenter(geometry: Geometry): [number, number] | null {
+  const rings: Position[][] =
+    geometry.type === "Polygon"
+      ? geometry.coordinates
+      : geometry.type === "MultiPolygon"
+        ? geometry.coordinates.map((poly) => poly[0])
+        : [];
+  if (rings.length === 0) return null;
+
+  let largest = rings[0];
+  let largestArea = -Infinity;
+  for (const ring of rings) {
+    const area = ringArea(ring);
+    if (area > largestArea) {
+      largestArea = area;
+      largest = ring;
+    }
+  }
+
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+  for (const [lon, lat] of largest) {
+    if (lon < minLon) minLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lon > maxLon) maxLon = lon;
+    if (lat > maxLat) maxLat = lat;
+  }
+  return [(minLon + maxLon) / 2, (minLat + maxLat) / 2];
+}
+
 interface NutsProperties {
   NUTS_ID: string;
   CNTR_CODE: string;
@@ -148,11 +187,19 @@ async function main() {
       console.warn(`  ! ${feature.properties.NAME_LATN} collapsed, skipping`);
       continue;
     }
+    // One label anchor per state. MapLibre draws a symbol per polygon
+    // *part*, so Schleswig-Holstein (8 parts with its islands) rendered its
+    // name up to eight times. Labels are drawn from a point source instead,
+    // anchored on the largest part.
+    const anchor = largestPartCenter(simplified);
+
     features.push({
       type: "Feature",
       properties: {
         id: feature.properties.NUTS_ID,
         name: feature.properties.NAME_LATN,
+        labelLon: anchor ? Math.round(anchor[0] * 1e4) / 1e4 : null,
+        labelLat: anchor ? Math.round(anchor[1] * 1e4) / 1e4 : null,
       },
       geometry: round(simplified),
     });

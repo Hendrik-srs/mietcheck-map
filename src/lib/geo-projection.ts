@@ -124,6 +124,43 @@ export function labelAnchor(frame: Frame, geometry: Geometry): [number, number] 
 }
 
 /**
+ * Removes MultiPolygon parts below a minimum area.
+ *
+ * Official boundary data carries surveying slivers — Berlin's Pankow ships
+ * as four parts: the real 103 km² district plus fragments of roughly 200,
+ * 20 and 4 m². MapLibre labels every part, and when tile simplification
+ * collapses fragments that small the triangulation of the whole feature
+ * fails, so the district loses its fill at some zoom levels.
+ *
+ * The database strips these on write (migration 0015); this is the client
+ * side of the same guard, so the map renders correctly regardless of
+ * whether that migration has been applied.
+ *
+ * Threshold is in square degrees: at Berlin's latitude 1 deg² is roughly
+ * 7.5e9 m², so the default of 2e-6 is about 1.5 ha.
+ */
+export function dropSliverParts<G extends Geometry>(
+  geometry: G,
+  minArea = 2e-6,
+): G {
+  if (geometry.type !== "MultiPolygon") return geometry;
+
+  const areaOf = (ring: Position[]) => {
+    let area = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      area += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+    }
+    return Math.abs(area / 2);
+  };
+
+  const kept = geometry.coordinates.filter((poly) => areaOf(poly[0]) >= minArea);
+  // Never return an empty geometry: if every part is below the threshold the
+  // shape is genuinely tiny, so keep it as it was.
+  if (kept.length === 0 || kept.length === geometry.coordinates.length) return geometry;
+  return { ...geometry, coordinates: kept };
+}
+
+/**
  * Label anchor in lon/lat, for callers without a projected frame.
  *
  * PostGIS supplies a proper ST_PointOnSurface anchor; this is the fallback

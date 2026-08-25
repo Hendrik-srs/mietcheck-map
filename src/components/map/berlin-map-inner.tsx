@@ -13,7 +13,7 @@ import {
 } from "react-map-gl/maplibre";
 import { useRef } from "react";
 import type { FeatureCollection, Geometry, Point } from "geojson";
-import { Check, ChevronDown, Maximize2 } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Maximize2 } from "lucide-react";
 
 import { RentHistoryChart } from "@/components/map/rent-history-chart";
 import {
@@ -24,7 +24,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import germanyStates from "@/lib/data/germany-states.json";
-import { largestRingCenter } from "@/lib/geo-projection";
+import { dropSliverParts, largestRingCenter } from "@/lib/geo-projection";
 import { RENT_NO_DATA_COLOR, RENT_STOPS, rentGradientCss } from "@/lib/rent-color";
 import { useIsDarkTheme } from "@/lib/use-theme";
 import type {
@@ -45,6 +45,20 @@ import type {
 
 /** Below this zoom the country view dominates; above it, the districts. */
 const DISTRICT_ZOOM = 8.2;
+
+interface StateProperties {
+  id: string;
+  name: string;
+  labelLon: number | null;
+  labelLat: number | null;
+}
+
+/** What a click on a federal state shows. */
+interface StateSummary {
+  name: string;
+  rentMedian: number | null;
+  districtCount: number;
+}
 
 interface Region {
   id: string;
@@ -68,16 +82,28 @@ const STATES_FILL: LayerProps = {
   id: "states-fill",
   type: "fill",
   paint: {
-    "fill-color": ["case", ["==", ["get", "name"], "Berlin"], "#f59e0b", "#94a3b8"],
+    // Same choropleth as the districts, one level up: a state carrying data
+    // is shaded by its own median, the rest stay neutral grey.
+    "fill-color": [
+      "case",
+      ["==", ["get", "rent_median"], null],
+      "#94a3b8",
+      [
+        "interpolate",
+        ["linear"],
+        ["to-number", ["get", "rent_median"]],
+        ...RENT_STOPS.flat(),
+      ],
+    ],
     // Fades out as the districts take over, so the two never fight.
     "fill-opacity": [
       "interpolate",
       ["linear"],
       ["zoom"],
       4.5,
-      0.35,
+      ["case", ["==", ["get", "rent_median"], null], 0.3, 0.85],
       DISTRICT_ZOOM,
-      0.1,
+      ["case", ["==", ["get", "rent_median"], null], 0.1, 0.2],
       DISTRICT_ZOOM + 1,
       0,
     ],
@@ -104,6 +130,11 @@ const STATES_LINE: LayerProps = {
   },
 };
 
+/**
+ * Drawn from a point source, not the polygons: MapLibre emits one symbol per
+ * polygon *part*, so Schleswig-Holstein printed its name once per island —
+ * eight times. The anchors are precomputed in the geometry build script.
+ */
 const STATES_LABEL: LayerProps = {
   id: "states-label",
   type: "symbol",
@@ -112,6 +143,7 @@ const STATES_LABEL: LayerProps = {
     "text-font": ["Noto Sans Regular"],
     "text-size": 12,
     "text-allow-overlap": false,
+    "text-padding": 6,
   },
   paint: {
     "text-color": "#475569",
@@ -263,20 +295,111 @@ export default function BerlinMapInner({
   districts: DistrictsFeatureCollection;
 }) {
   const [selected, setSelected] = useState<DistrictProperties | null>(null);
+  const [selectedState, setSelectedState] = useState<StateSummary | null>(null);
   const [cursor, setCursor] = useState<"auto" | "pointer">("auto");
   const [activeRegion, setActiveRegion] = useState<string>("berlin");
+  const [zoom, setZoom] = useState(REGIONS[0].zoom);
   const isDark = useIsDarkTheme();
   const mapRef = useRef<MapRef>(null);
 
-  const onClick = useCallback((e: MapLayerMouseEvent) => {
-    const feature = e.features?.[0];
-    if (!feature) return;
-    setSelected(parseDistrictProperties(feature.properties));
+  /**
+   * Level of detail. Far out, a state is the smallest unit you can even see,
+   * so that is what responds to a click; once the districts are legible they
+   * take over. Clicking a two-pixel district from across the country used to
+   * open a detail panel for something you could not point at.
+   */
+  const showDistricts = zoom >= DISTRICT_ZOOM;
+
+  const flyTo = useCallback((center: [number, number], zoomTo: number) => {
+    mapRef.current?.flyTo({ center, zoom: zoomTo, duration: 1400, essential: true });
   }, []);
 
-  const flyTo = useCallback((center: [number, number], zoom: number) => {
-    mapRef.current?.flyTo({ center, zoom, duration: 1400, essential: true });
-  }, []);
+  const onClick = useCallback(
+    (event: MapLayerMouseEvent) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+
+      if (feature.layer?.id === FILL_LAYER.id) {
+        setSelectedState(null);
+        setSelected(parseDistrictProperties(feature.properties));
+        return;
+      }
+
+      const props = feature.properties ?? {};
+      setSelected(null);
+      setSelectedState({
+        name: String(props.name ?? "Unbekannt"),
+        rentMedian: typeof props.rent_median === "number" ? props.rent_median : null,
+        districtCount:
+          typeof props.district_count === "number" ? props.district_count : 0,
+      });
+    },
+    [],
+  );
+
+  /**
+   * Districts with surveying slivers removed, so a MultiPolygon fragment
+   * cannot break the fill or duplicate the label. Mirrors what migration
+   * 0015 does server-side.
+   */
+  const cleanedDistricts = useMemo<DistrictsFeatureCollection>(
+    () => ({
+      ...districts,
+      features: districts.features.map((f) => ({
+        ...f,
+        geometry: dropSliverParts(f.geometry),
+      })),
+    }),
+    [districts],
+  );
+
+  /**
+   * The states layer, joined with what we know per state.
+   *
+   * Berlin is a city-state, so the mean of its district medians is the
+   * city's figure. Any state without ingested data keeps a null median and
+   * renders neutral — the map never implies coverage we don't have.
+   */
+  const statesWithData = useMemo(() => {
+    const medians = districts.features
+      .map((f) => f.properties.rent_median)
+      .filter((v): v is number => typeof v === "number");
+    const berlinMean =
+      medians.length > 0
+        ? medians.reduce((a, b) => a + b, 0) / medians.length
+        : null;
+
+    const source = germanyStates as FeatureCollection<Geometry, StateProperties>;
+    return {
+      type: "FeatureCollection" as const,
+      features: source.features.map((f) => ({
+        ...f,
+        properties: {
+          ...f.properties,
+          rent_median: f.properties.name === "Berlin" ? berlinMean : null,
+          district_count: f.properties.name === "Berlin" ? medians.length : 0,
+        },
+      })),
+    };
+  }, [districts]);
+
+  const stateLabelPoints = useMemo<FeatureCollection<Point, { name: string }>>(
+    () => ({
+      type: "FeatureCollection",
+      features: statesWithData.features.flatMap((f) => {
+        const { labelLon, labelLat, name } = f.properties;
+        if (labelLon == null || labelLat == null) return [];
+        return [
+          {
+            type: "Feature" as const,
+            geometry: { type: "Point" as const, coordinates: [labelLon, labelLat] },
+            properties: { name },
+          },
+        ];
+      }),
+    }),
+    [statesWithData],
+  );
 
   const stats = useMemo(() => {
     const medians = districts.features
@@ -296,7 +419,7 @@ export default function BerlinMapInner({
   const labelPoints = useMemo<FeatureCollection<Point, { name: string }>>(
     () => ({
       type: "FeatureCollection",
-      features: districts.features.flatMap((f) => {
+      features: cleanedDistricts.features.flatMap((f) => {
         const { label_lon: lon, label_lat: lat, name } = f.properties;
         const coordinates =
           lon != null && lat != null ? [lon, lat] : largestRingCenter(f.geometry);
@@ -310,7 +433,7 @@ export default function BerlinMapInner({
         ];
       }),
     }),
-    [districts],
+    [cleanedDistricts],
   );
 
   return (
@@ -326,23 +449,25 @@ export default function BerlinMapInner({
         maxZoom={16}
         style={{ width: "100%", height: "100%" }}
         mapStyle={isDark ? BASEMAP.dark : BASEMAP.light}
-        interactiveLayerIds={[FILL_LAYER.id!]}
+        // Only the layer you can actually see and aim at is clickable.
+        interactiveLayerIds={[showDistricts ? FILL_LAYER.id! : STATES_FILL.id!]}
         onClick={onClick}
+        onZoom={(event) => setZoom(event.viewState.zoom)}
+        onLoad={(event) => setZoom(event.target.getZoom())}
         onMouseEnter={() => setCursor("pointer")}
         onMouseLeave={() => setCursor("auto")}
         cursor={cursor}
       >
-        <Source
-          id="states"
-          type="geojson"
-          data={germanyStates as FeatureCollection<Geometry, { name: string }>}
-        >
+        <Source id="states" type="geojson" data={statesWithData}>
           <Layer {...STATES_FILL} />
           <Layer {...STATES_LINE} />
+        </Source>
+
+        <Source id="state-labels" type="geojson" data={stateLabelPoints}>
           <Layer {...STATES_LABEL} />
         </Source>
 
-        <Source id="districts" type="geojson" data={districts}>
+        <Source id="districts" type="geojson" data={cleanedDistricts}>
           <Layer {...FILL_LAYER} />
           <Layer {...LINE_LAYER} />
         </Source>
@@ -374,6 +499,25 @@ export default function BerlinMapInner({
       >
         <SheetContent>
           {selected && <DistrictDetails district={selected} />}
+        </SheetContent>
+      </Sheet>
+
+      <Sheet
+        open={selectedState !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedState(null);
+        }}
+      >
+        <SheetContent>
+          {selectedState && (
+            <StateDetails
+              state={selectedState}
+              onZoomIn={() => {
+                setSelectedState(null);
+                flyTo(REGIONS[0].center, REGIONS[0].zoom);
+              }}
+            />
+          )}
         </SheetContent>
       </Sheet>
     </>
@@ -556,6 +700,70 @@ function DistrictDetails({ district }: { district: DistrictProperties }) {
           angebotene Wohnungen. Sie liegt typischerweise über der Bestandsmiete
           (= laufende Mieten in bestehenden Verträgen).
         </p>
+      </div>
+    </>
+  );
+}
+
+function StateDetails({
+  state,
+  onZoomIn,
+}: {
+  state: StateSummary;
+  onZoomIn: () => void;
+}) {
+  const hasData = state.rentMedian != null;
+
+  return (
+    <>
+      <SheetHeader>
+        <SheetTitle>{state.name}</SheetTitle>
+        <SheetDescription>Bundesland</SheetDescription>
+      </SheetHeader>
+      <div className="space-y-4 overflow-y-auto px-4 pb-6">
+        {hasData ? (
+          <>
+            <div className="rounded-lg border bg-card p-4">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                Durchschnitt der Bezirks-Mediane
+              </div>
+              <div className="mt-1 flex items-baseline gap-1">
+                <span className="text-3xl font-semibold tabular-nums">
+                  {EUR.format(state.rentMedian!)}
+                </span>
+                <span className="text-sm text-muted-foreground">/ m² netto kalt</span>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Über {state.districtCount} Bezirke · Angebotsmieten laut IBB
+                Wohnungsmarktbericht
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onZoomIn}
+              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Bezirke im Detail ansehen
+              <ArrowRight className="size-4" />
+            </button>
+
+            <p className="text-[11px] text-muted-foreground">
+              Der Wert mittelt die Mediane der einzelnen Bezirke und dient der
+              groben Einordnung. Für die Prüfung einer konkreten Wohnung zählt
+              der Bezirkswert — und der Mietspiegel.
+            </p>
+          </>
+        ) : (
+          <div className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Noch keine Daten.</p>
+            <p className="mt-1">
+              Für {state.name} liegen bisher keine eingelesenen Mietwerte vor.
+              Als Nächstes sind München, Hamburg und Köln geplant — alle
+              ausschließlich aus offiziellen Quellen.
+            </p>
+          </div>
+        )}
       </div>
     </>
   );
